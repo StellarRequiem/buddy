@@ -1,7 +1,14 @@
 'use strict';
 
-let currentSession = null;
+// ── Session persistence ─────────────────────────────────────────────────────
+// Restore session from localStorage so a page refresh doesn't lose chat history.
+let currentSession = localStorage.getItem('buddy_session') || null;
 let pendingShellCommand = null;
+
+function _saveSession(id) {
+  currentSession = id;
+  if (id) localStorage.setItem('buddy_session', id);
+}
 
 // ── Tab switching ───────────────────────────────────────────────────────────
 function showTab(name) {
@@ -15,6 +22,7 @@ function showTab(name) {
     htmx.trigger('#facts-panel', 'load');
     htmx.trigger('#mem-stats', 'load');
   }
+  if (name === 'forest') refreshForestStatus();
 }
 
 // ── Chat ────────────────────────────────────────────────────────────────────
@@ -79,7 +87,7 @@ async function sendMessage(e) {
     const data = await resp.json();
     hideThinking();
 
-    currentSession = data.session_id;
+    _saveSession(data.session_id);
     appendMessage('assistant', data.response, data.model_used);
 
     // Update model badge
@@ -191,6 +199,100 @@ function renderFacts(facts) {
       <span class="fact-val">${v}</span>
     </div>`).join('');
 }
+
+// ── Forest status ───────────────────────────────────────────────────────────
+async function refreshForestStatus() {
+  const bar = document.getElementById('forest-panel');
+  const detail = document.getElementById('forest-detail');
+
+  try {
+    const resp = await fetch('/forest/status');
+    const d = await resp.json();
+
+    if (d.status === 'offline') {
+      if (bar)    bar.innerHTML = '🌲 Forest: <span class="forest-offline">offline</span>';
+      if (detail) detail.innerHTML = `<p style="color:var(--muted)">Forest swarm not running.<br><code>${d.message || ''}</code></p>`;
+      return;
+    }
+    if (d.status === 'error') {
+      if (bar)    bar.innerHTML = `🌲 Forest: <span class="forest-offline">error</span>`;
+      if (detail) detail.innerHTML = `<p style="color:var(--muted)">Error: ${d.message}</p>`;
+      return;
+    }
+
+    const active = d.active_incidents || [];
+    const sev = d.severity_breakdown || {};
+    const critical = (sev['CRITICAL'] || 0) + (sev['ATTACK'] || 0);
+    const badgeClass = critical > 0 ? 'forest-badge critical' : 'forest-badge ok';
+    const badgeLabel = critical > 0 ? `⚠ ${critical} critical` : '✓ clear';
+
+    // Header bar — compact
+    if (bar) {
+      bar.innerHTML = `🌲 Forest: <span class="${badgeClass}">${badgeLabel}</span>` +
+        ` <span class="forest-stat">${d.total_logged} logged · ${d.chain_length} chain</span>`;
+    }
+
+    // Detail panel — full
+    if (detail) {
+      let html = `<div class="forest-stats-grid">
+        <div class="forest-stat-card"><div class="stat-val">${d.total_logged}</div><div class="stat-lbl">incidents</div></div>
+        <div class="forest-stat-card"><div class="stat-val">${d.chain_length}</div><div class="stat-lbl">chain entries</div></div>
+        <div class="forest-stat-card"><div class="stat-val">${d.improvements_logged || 0}</div><div class="stat-lbl">improvements</div></div>
+        <div class="forest-stat-card"><div class="stat-val ${critical > 0 ? 'critical-val' : ''}">${critical}</div><div class="stat-lbl">critical/attack</div></div>
+      </div>`;
+
+      if (Object.keys(sev).length) {
+        html += '<h3>Severity breakdown</h3><div class="forest-sev-list">';
+        for (const [k, v] of Object.entries(sev)) {
+          html += `<span class="inc-sev ${k.toLowerCase()}">${k}: ${v}</span> `;
+        }
+        html += '</div>';
+      }
+
+      if (active.length) {
+        html += '<h3>Active incidents</h3><div class="forest-incidents">';
+        for (const inc of active) {
+          const actions = inc.response_actions?.join(', ') || '—';
+          const ips = inc.blocked_ips?.join(', ') || '—';
+          html += `<div class="forest-inc-card">
+            <div><span class="inc-sev ${inc.severity.toLowerCase()}">${inc.severity}</span>
+              <span class="inc-type">${inc.threat_type}</span>
+              <span class="inc-phase">[${inc.phase}]</span>
+            </div>
+            <div class="inc-meta">actions: ${actions}</div>
+            <div class="inc-meta">blocked: ${ips}</div>
+            <div class="inc-meta" style="color:var(--muted)">${inc.timestamp?.slice(0,19) || ''}</div>
+          </div>`;
+        }
+        html += '</div>';
+      } else {
+        html += '<p style="color:var(--muted);margin-top:1rem">No active incidents.</p>';
+      }
+
+      html += `<p style="color:var(--muted);font-size:.75rem;margin-top:1rem">Last checked: ${d.checked_at?.slice(0,19) || 'unknown'} UTC</p>`;
+      detail.innerHTML = html;
+    }
+  } catch (_) {
+    if (bar)    bar.innerHTML = '🌲 Forest: <span class="forest-offline">unreachable</span>';
+    if (detail) detail.innerHTML = '<p style="color:var(--muted)">Could not reach forest API.</p>';
+  }
+}
+
+// Poll forest status every 30s and on load
+document.addEventListener('DOMContentLoaded', () => {
+  refreshForestStatus();
+  setInterval(refreshForestStatus, 30_000);
+
+  // If we restored a session, load its history
+  if (currentSession) {
+    fetch(`/chat/history/${currentSession}?limit=30`)
+      .then(r => r.json())
+      .then(d => {
+        (d.messages || []).forEach(m => appendMessage(m.role, m.content, m.model || ''));
+      })
+      .catch(() => {}); // silently ignore if session no longer exists
+  }
+});
 
 async function searchMemory() {
   const q = document.getElementById('mem-search-input').value.trim();

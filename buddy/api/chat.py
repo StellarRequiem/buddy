@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from buddy.llm.prompts import build_chat_prompt
-from buddy.llm.router import route, local_chat_stream
+from buddy.llm.router import route, local_chat_stream, grade_response_score
 from buddy.memory.store import append_message, get_history, upsert_fact, list_sessions
 from buddy.memory.vectors import search_memory, upsert_memory
 from buddy.tools.filesystem import read_file
@@ -113,7 +113,17 @@ async def chat(req: ChatRequest):
     # Persist to memory
     append_message(session_id, "user", req.message)
     append_message(session_id, "assistant", clean, model=model_used)
-    upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")
+
+    # Only embed "significant" exchanges — skip trivial ones (greetings, acks)
+    # then gate on cus-core composite score >= 70 to avoid polluting the vector store
+    _trivial = len(req.message) < 20 or len(clean) < 50
+    if not _trivial:
+        try:
+            _score = await grade_response_score(clean, context=req.message)
+            if _score >= 70.0:
+                upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")
+        except Exception:
+            upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")  # fail open
 
     return ChatResponse(
         session_id=session_id,

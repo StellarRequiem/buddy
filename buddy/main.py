@@ -22,6 +22,8 @@ from buddy.memory.db import init_db
 from buddy.api.chat import router as chat_router
 from buddy.api.tasks import router as tasks_router
 from buddy.api.memory import router as memory_router
+from buddy.api.siri import router as siri_router
+from buddy.api.forest import router as forest_router
 from buddy.tools.shell import execute as shell_execute, requires_confirmation
 
 # ── Init DB on startup ─────────────────────────────────────────────────────
@@ -47,6 +49,8 @@ _INDEX_HTML = (_TEMPLATES_DIR / "index.html").read_text()
 app.include_router(chat_router)
 app.include_router(tasks_router)
 app.include_router(memory_router)
+app.include_router(siri_router)
+app.include_router(forest_router)
 
 
 # ── UI ─────────────────────────────────────────────────────────────────────

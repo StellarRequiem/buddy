@@ -18,8 +18,12 @@
       <button class="tab-btn active" onclick="showTab('chat')">Chat</button>
       <button class="tab-btn" onclick="showTab('tasks')">Tasks</button>
       <button class="tab-btn" onclick="showTab('memory')">Memory</button>
+      <button class="tab-btn" onclick="showTab('forest')">Forest</button>
     </nav>
   </header>
+
+  <!-- ── Forest status bar (always visible in header area) ─────────────────── -->
+  <div id="forest-panel" class="forest-bar">🌲 Forest: checking…</div>
 
   <!-- ── Chat tab ───────────────────────────────────────── -->
   <section id="tab-chat" class="tab active">
@@ -57,6 +61,17 @@
          hx-target="#task-list"
          hx-swap="innerHTML">
       Loading...
+    </div>
+  </section>
+
+  <!-- ── Forest tab ───────────────────────────────────────── -->
+  <section id="tab-forest" class="tab hidden">
+    <div class="tab-toolbar">
+      <span style="color:var(--muted);font-size:.85rem">Forest blue-team swarm · auto-refreshes every 30s</span>
+      <button onclick="refreshForestStatus()">↻ Refresh</button>
+    </div>
+    <div id="forest-detail" class="forest-detail">
+      <p style="color:var(--muted)">Loading…</p>
     </div>
   </section>
 

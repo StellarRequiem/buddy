@@ -19,6 +19,7 @@ dependencies = [
     "ollama>=0.4",
     "chromadb>=0.5",
     "cus-core @ file:///Users/llm01/Projects/cus-core",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]

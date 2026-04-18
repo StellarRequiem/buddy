@@ -189,3 +189,58 @@ button[type="submit"]:disabled { opacity: 0.4; cursor: not-allowed; }
 .mem-dist { color: var(--muted); font-size: 11px; margin-top: 4px; }
 
 h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin: 16px 0 8px; }
+
+/* ── Forest status ────────────────────────────────────────────── */
+.forest-bar {
+  background: #0e1620;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+.forest-offline { color: var(--muted); }
+.forest-badge   { font-weight: 600; padding: 1px 8px; border-radius: 10px; font-size: 11px; }
+.forest-badge.ok       { background: #1f3a1a; color: var(--green); }
+.forest-badge.critical { background: #3a1a1a; color: var(--red); }
+.forest-stat { color: var(--muted); font-size: 11px; }
+
+.forest-detail { padding: 0 4px; overflow-y: auto; }
+.forest-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 16px 0;
+}
+.forest-stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  text-align: center;
+}
+.stat-val  { font-size: 22px; font-weight: 700; color: var(--text); }
+.stat-lbl  { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.critical-val { color: var(--red); }
+
+.forest-sev-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.forest-incidents { display: flex; flex-direction: column; gap: 10px; }
+.forest-inc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.inc-sev   { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; margin-right: 6px; }
+.inc-sev.info     { background: #1a2533; color: var(--accent); }
+.inc-sev.warning  { background: #2d2200; color: var(--yellow); }
+.inc-sev.critical { background: #3a1a1a; color: var(--red); }
+.inc-sev.attack   { background: #3a0000; color: #ff6b6b; }
+.inc-type  { font-weight: 500; }
+.inc-phase { color: var(--muted); font-size: 12px; margin-left: 6px; }
+.inc-meta  { color: var(--muted); font-size: 12px; margin-top: 4px; }

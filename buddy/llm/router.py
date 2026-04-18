@@ -146,6 +146,25 @@ async def frontier_chat(messages: list[dict], session_id: str = "") -> str:
     return result
 
 
+async def grade_response_score(response: str, context: str = "") -> float:
+    """
+    Grade a response with phi4-mini via cus-core.
+    Returns composite score 0–100. Used by chat.py to filter memory upserts.
+    Defaults to 75.0 on grading failure so caller doesn't need to handle exceptions.
+    """
+    try:
+        task = Task(
+            id="buddy_memory_grade",
+            description=f"User asked: {context[:120]}",
+            expected_outcome="A direct, accurate, concise response that addresses the user's request",
+            stages=[_RESPONSE_STAGE],
+        )
+        result = _GRADER.grade(task=task, response=response)
+        return result.composite_score
+    except Exception:
+        return 75.0   # default pass — fail open so nothing is silently dropped
+
+
 async def route(messages: list[dict], session_id: str = "",
                 force_frontier: bool = False) -> str:
     """

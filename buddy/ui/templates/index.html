@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Buddy</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="app">
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header>
+    <span class="logo">🌲 Buddy</span>
+    <span id="model-badge" class="badge">local</span>
+    <nav>
+      <button class="tab-btn active" onclick="showTab('chat')">Chat</button>
+      <button class="tab-btn" onclick="showTab('tasks')">Tasks</button>
+      <button class="tab-btn" onclick="showTab('memory')">Memory</button>
+    </nav>
+  </header>
+
+  <!-- ── Chat tab ───────────────────────────────────────── -->
+  <section id="tab-chat" class="tab active">
+    <div id="messages" class="messages"></div>
+
+    <!-- Shell confirmation banner (hidden by default) -->
+    <div id="shell-gate" class="shell-gate hidden">
+      <span id="shell-cmd-preview"></span>
+      <div class="gate-actions">
+        <button onclick="approveShell()" class="btn-approve">Run ✓</button>
+        <button onclick="denyShell()" class="btn-deny">Block ✗</button>
+      </div>
+    </div>
+
+    <form id="chat-form" onsubmit="sendMessage(event)">
+      <div class="input-row">
+        <input id="msg-input" type="text" placeholder="Ask anything..." autocomplete="off" autofocus>
+        <label class="frontier-toggle" title="Escalate to Claude Haiku">
+          <input type="checkbox" id="frontier-toggle"> 🌐
+        </label>
+        <button type="submit" id="send-btn">Send</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ── Tasks tab ──────────────────────────────────────── -->
+  <section id="tab-tasks" class="tab hidden">
+    <div class="tab-toolbar">
+      <input id="task-input" type="text" placeholder="New task title...">
+      <button onclick="createTask()">+ Add</button>
+    </div>
+    <div id="task-list"
+         hx-get="/tasks"
+         hx-trigger="load, every 10s"
+         hx-target="#task-list"
+         hx-swap="innerHTML">
+      Loading...
+    </div>
+  </section>
+
+  <!-- ── Memory tab ─────────────────────────────────────── -->
+  <section id="tab-memory" class="tab hidden">
+    <div class="tab-toolbar">
+      <input id="mem-search-input" type="text" placeholder="Search memory...">
+      <button onclick="searchMemory()">Search</button>
+    </div>
+    <h3>User Facts</h3>
+    <div id="facts-panel"
+         hx-get="/memory/facts"
+         hx-trigger="load"
+         hx-target="#facts-panel"
+         hx-swap="innerHTML">
+      Loading...
+    </div>
+    <h3>Search Results</h3>
+    <div id="mem-results"></div>
+    <h3>Stats</h3>
+    <div id="mem-stats"
+         hx-get="/memory/stats"
+         hx-trigger="load"
+         hx-target="#mem-stats"
+         hx-swap="innerHTML">
+      Loading...
+    </div>
+  </section>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

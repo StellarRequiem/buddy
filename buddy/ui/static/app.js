@@ -23,6 +23,7 @@ function showTab(name) {
     htmx.trigger('#mem-stats', 'load');
   }
   if (name === 'forest') refreshForestStatus();
+  if (name === 'demo') loadDemoScenarios();
 }
 
 // ── Chat ────────────────────────────────────────────────────────────────────
@@ -363,6 +364,122 @@ document.addEventListener('DOMContentLoaded', () => {
       .catch(() => {}); // silently ignore if session no longer exists
   }
 });
+
+// ── Demo (expected-failure) ─────────────────────────────────────────────────
+let _demoScenarios = [];
+
+async function loadDemoScenarios() {
+  const container = document.getElementById('demo-scenarios');
+  if (!container) return;
+  if (_demoScenarios.length) { _renderScenarios(); return; }
+  try {
+    const resp = await fetch('/demo/tasks');
+    const d = await resp.json();
+    _demoScenarios = d.scenarios || [];
+    _renderScenarios();
+  } catch (e) {
+    container.innerHTML = `<p style="color:var(--muted)">Could not load demo scenarios: ${e.message}</p>`;
+  }
+}
+
+function _renderScenarios() {
+  const container = document.getElementById('demo-scenarios');
+  if (!container) return;
+  container.innerHTML = _demoScenarios.map(s => `
+    <div class="demo-card" onclick="runDemo('${s.id}')">
+      <div class="demo-card-label">${s.label}</div>
+      <div class="demo-card-why">${s.why}</div>
+      <button class="demo-run-btn">Run ▸</button>
+    </div>`).join('');
+}
+
+async function runDemo(scenarioId) {
+  const result = document.getElementById('demo-result');
+  if (!result) return;
+
+  // Show loading state
+  result.className = 'demo-result';
+  result.innerHTML = `
+    <div class="demo-loading">
+      <div class="demo-loading-title">Running demo…</div>
+      <div class="demo-loading-steps">
+        <div class="demo-step active">① Sending harmful prompt to Opus 4.7</div>
+        <div class="demo-step">② Haiku grading refusal quality (extended thinking)</div>
+        <div class="demo-step">③ Rendering results</div>
+      </div>
+    </div>`;
+
+  try {
+    const resp = await fetch('/demo/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario_id: scenarioId }),
+    });
+    const d = await resp.json();
+    if (!resp.ok) {
+      result.innerHTML = `<p style="color:var(--red)">Error: ${d.detail}</p>`;
+      return;
+    }
+    _renderDemoResult(d);
+  } catch (e) {
+    result.innerHTML = `<p style="color:var(--red)">Error: ${e.message}</p>`;
+  }
+}
+
+function _renderDemoResult(d) {
+  const result = document.getElementById('demo-result');
+  const g = d.grade;
+  const scoreClass = g.composite_score >= 70 ? 'grade-pass' : g.composite_score >= 50 ? 'grade-warn' : 'grade-fail';
+
+  let rubricHtml = (g.rubrics || []).map(r => {
+    const pct = r.score;
+    const barClass = pct >= 70 ? 'bar-pass' : pct >= 40 ? 'bar-warn' : 'bar-fail';
+    return `<div class="rubric-row">
+      <span class="rubric-name">${r.name.replace('_', ' ')}</span>
+      <div class="rubric-bar-wrap"><div class="rubric-bar ${barClass}" style="width:${pct}%"></div></div>
+      <span class="rubric-score">${pct.toFixed(0)}</span>
+      <span class="rubric-weight">${(r.weight * 100).toFixed(0)}%</span>
+    </div>`;
+  }).join('');
+
+  const thinkingHtml = g.thinking_trace ? `
+    <div class="thinking-trace" style="margin-top:16px">
+      <div class="thinking-label">🧠 Haiku's grader reasoning (extended thinking)</div>
+      <pre class="thinking-text">${_escapeHtml(g.thinking_trace)}</pre>
+    </div>` : '';
+
+  result.className = 'demo-result';
+  result.innerHTML = `
+    <div class="demo-result-header">
+      <span class="grade-badge ${scoreClass}">● ${g.composite_score.toFixed(0)}/100 ${g.passed ? 'PASS' : 'FAIL'}</span>
+      <span class="demo-headline">${d.headline}</span>
+    </div>
+
+    <div class="demo-expected-failure-note">
+      ⚡ <strong>Expected-failure semantics:</strong> this task expected the agent to refuse.
+      A high score means it refused <em>correctly</em> — not that it produced good output.
+    </div>
+
+    <div class="demo-columns">
+      <div class="demo-col">
+        <h3>Harmful prompt sent</h3>
+        <div class="demo-prompt">${_escapeHtml(d.scenario.prompt)}</div>
+        <h3>Opus 4.7 response</h3>
+        <div class="demo-response">${_escapeHtml(d.agent_response)}</div>
+      </div>
+      <div class="demo-col">
+        <h3>Refusal quality rubric</h3>
+        <div class="grade-rubrics">${rubricHtml}</div>
+        ${thinkingHtml}
+      </div>
+    </div>
+
+    <button class="demo-back-btn" onclick="document.getElementById('demo-result').classList.add('hidden');document.getElementById('demo-scenarios').style.display=''">
+      ← Try another scenario
+    </button>`;
+
+  document.getElementById('demo-scenarios').style.display = 'none';
+}
 
 async function searchMemory() {
   const q = document.getElementById('mem-search-input').value.trim();

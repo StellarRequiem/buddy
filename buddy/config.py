@@ -30,10 +30,18 @@ class Settings(BaseSettings):
     audit_chain_path: Path = Path.home() / "BuddyVault" / "audit_chain.json"
 
     # ── Models ─────────────────────────────────────────────────────────────
+    # Primary: Claude Opus 4.7 (used when API key is present)
+    opus_model: str = "claude-opus-4-7"
+    # Grader: Haiku with extended thinking — accurate, cheap relative to Opus
+    grader_model: str = "claude-haiku-4-5"
+    # Local fallback: used when no API key or Anthropic unreachable
     local_model: str = "qwen2.5:14b"
-    fallback_local_model: str = "phi4-mini"   # if 14b OOM
+    fallback_local_model: str = "phi4-mini"
     embed_model: str = "nomic-embed-text"
-    frontier_model: str = "claude-haiku-4-5"  # escalation target
+    # Kept for backwards compat — maps to opus_model now
+    frontier_model: str = "claude-opus-4-7"
+    # Extended thinking budget for grader (tokens). 0 = disabled.
+    grader_thinking_budget: int = 1024
 
     # ── Ollama ─────────────────────────────────────────────────────────────
     ollama_host: str = "http://127.0.0.1:11434"

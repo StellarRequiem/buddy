@@ -1,20 +1,19 @@
 """
 POST /chat        — send a message, get a response
-GET  /chat/stream — SSE streaming version
 GET  /sessions    — list session IDs
+GET  /history/:id — conversation history
 """
 from __future__ import annotations
 
 import re
 import uuid
-from typing import AsyncGenerator
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from buddy.llm.prompts import build_chat_prompt
-from buddy.llm.router import route, local_chat_stream, grade_response_score
+from buddy.llm.router import route, local_chat_stream, grade_response_score, RouteResult
 from buddy.memory.store import append_message, get_history, upsert_fact, list_sessions
 from buddy.memory.vectors import search_memory, upsert_memory
 from buddy.tools.filesystem import read_file
@@ -27,80 +26,115 @@ _READ_FILE_RE = re.compile(r"^READ_FILE:\s*(.+)$", re.MULTILINE)
 _SHELL_RE     = re.compile(r"^SHELL:\s*(.+)$", re.MULTILINE)
 
 
+# ── Request / Response models ──────────────────────────────────────────────────
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
     force_frontier: bool = False
 
 
+class RubricScoreOut(BaseModel):
+    name: str
+    score: float
+    weight: float
+    weighted: float
+
+
+class GradeOut(BaseModel):
+    composite_score: float
+    passed: bool
+    rubrics: list[RubricScoreOut]
+    thinking_trace: str   # empty string when thinking not available
+    escalated: bool       # True when local was tried but fell below threshold
+
+
 class ChatResponse(BaseModel):
     session_id: str
     response: str
-    pending_confirmation: dict | None = None   # non-null if shell gate triggered
+    pending_confirmation: dict | None = None
     model_used: str
+    grade: GradeOut | None = None    # null when grading unavailable
 
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _extract_tool_calls(response: str) -> dict:
-    """Pull structured directives out of the model's response text."""
-    remember = {m.group(1): m.group(2).strip() for m in _REMEMBER_RE.finditer(response)}
+    remember   = {m.group(1): m.group(2).strip() for m in _REMEMBER_RE.finditer(response)}
     read_files = [m.group(1).strip() for m in _READ_FILE_RE.finditer(response)]
-    shells = [m.group(1).strip() for m in _SHELL_RE.finditer(response)]
+    shells     = [m.group(1).strip() for m in _SHELL_RE.finditer(response)]
     return {"remember": remember, "read_files": read_files, "shells": shells}
 
 
 def _clean_response(text: str) -> str:
-    """Strip directive lines from the user-facing response."""
     text = _REMEMBER_RE.sub("", text)
     text = _READ_FILE_RE.sub("", text)
     text = _SHELL_RE.sub("", text)
     return text.strip()
 
 
+def _grade_out(result: RouteResult) -> GradeOut | None:
+    """Convert RouteResult.grade → GradeOut for the API response."""
+    if result.grade is None:
+        return None
+    g = result.grade
+    return GradeOut(
+        composite_score=g.composite_score,
+        passed=g.passed,
+        rubrics=[
+            RubricScoreOut(name=r.name, score=r.score,
+                           weight=r.weight, weighted=r.weighted)
+            for r in g.rubrics
+        ],
+        thinking_trace=g.thinking_trace,
+        escalated=result.escalated,
+    )
+
+
+# ── Endpoint ───────────────────────────────────────────────────────────────────
+
 @router.post("", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
 
-    # Retrieve context
     history = get_history(session_id)
     mem_ctx = search_memory(req.message, n_results=3)
-
     messages = build_chat_prompt(history, req.message, mem_ctx)
 
-    model_used = "frontier" if req.force_frontier else "local"
-
     try:
-        raw_response = await route(messages, session_id=session_id,
-                                   force_frontier=req.force_frontier)
+        result: RouteResult = await route(
+            messages, session_id=session_id, force_frontier=req.force_frontier
+        )
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
 
-    # Process directives
+    raw_response = result.response
+
+    # ── Tool directives ────────────────────────────────────────────────────────
     directives = _extract_tool_calls(raw_response)
 
-    # Persist facts
     for k, v in directives["remember"].items():
         upsert_fact(k, v, source="assistant_inferred")
 
-    # Handle file reads — inject results back as a follow-up
     tool_context = ""
-    for path in directives["read_files"][:2]:   # cap at 2 reads per turn
+    for path in directives["read_files"][:2]:
         try:
-            contents = read_file(path)
-            tool_context += f"\n\n[FILE: {path}]\n{contents[:2000]}"
+            tool_context += f"\n\n[FILE: {path}]\n{read_file(path)[:2000]}"
         except Exception as e:
             tool_context += f"\n\n[FILE ERROR: {path}] {e}"
 
     if tool_context:
-        # Re-call model with file contents injected
         messages.append({"role": "assistant", "content": raw_response})
-        messages.append({"role": "user", "content": f"File contents:{tool_context}\n\nContinue your response."})
+        messages.append({"role": "user",
+                         "content": f"File contents:{tool_context}\n\nContinue."})
         try:
-            raw_response = await route(messages, session_id=session_id,
-                                       force_frontier=req.force_frontier)
+            result = await route(messages, session_id=session_id,
+                                 force_frontier=req.force_frontier)
+            raw_response = result.response
         except Exception:
             pass
 
-    # Handle shell gate
+    # ── Shell gate ─────────────────────────────────────────────────────────────
     pending_confirmation = None
     if directives["shells"]:
         try:
@@ -110,26 +144,24 @@ async def chat(req: ChatRequest):
 
     clean = _clean_response(raw_response)
 
-    # Persist to memory
+    # ── Persist ────────────────────────────────────────────────────────────────
     append_message(session_id, "user", req.message)
-    append_message(session_id, "assistant", clean, model=model_used)
+    append_message(session_id, "assistant", clean, model=result.model_used)
 
-    # Only embed "significant" exchanges — skip trivial ones (greetings, acks)
-    # then gate on cus-core composite score >= 70 to avoid polluting the vector store
+    # Memory filter — only embed significant exchanges (cus-core score ≥ 70)
     _trivial = len(req.message) < 20 or len(clean) < 50
     if not _trivial:
-        try:
-            _score = await grade_response_score(clean, context=req.message)
-            if _score >= 70.0:
-                upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")
-        except Exception:
-            upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")  # fail open
+        mem_score = (result.grade.composite_score
+                     if result.grade else await grade_response_score(clean, req.message))
+        if mem_score >= 70.0:
+            upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")
 
     return ChatResponse(
         session_id=session_id,
         response=clean,
         pending_confirmation=pending_confirmation,
-        model_used=model_used,
+        model_used=result.model_used,
+        grade=_grade_out(result),
     )
 
 

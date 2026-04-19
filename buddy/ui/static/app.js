@@ -26,7 +26,7 @@ function showTab(name) {
 }
 
 // ── Chat ────────────────────────────────────────────────────────────────────
-function appendMessage(role, content, model) {
+function appendMessage(role, content, model, grade) {
   const box = document.getElementById('messages');
   const wrapper = document.createElement('div');
   wrapper.className = `msg ${role}`;
@@ -34,16 +34,85 @@ function appendMessage(role, content, model) {
   const bubble = document.createElement('div');
   bubble.className = 'msg-bubble';
   bubble.textContent = content;
-
-  const meta = document.createElement('div');
-  meta.className = 'msg-meta';
-  meta.textContent = model ? `via ${model}` : '';
-
   wrapper.appendChild(bubble);
-  wrapper.appendChild(meta);
+
+  // ── Grade panel (assistant messages only, when grade data available) ────────
+  if (role === 'assistant' && grade && grade.composite_score !== undefined) {
+    wrapper.appendChild(_buildGradePanel(grade, model));
+  } else {
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    meta.textContent = model ? `via ${model}` : '';
+    wrapper.appendChild(meta);
+  }
+
   box.appendChild(wrapper);
   box.scrollTop = box.scrollHeight;
   return wrapper;
+}
+
+function _buildGradePanel(grade, model) {
+  const score = grade.composite_score;
+  const passed = grade.passed;
+  const escalated = grade.escalated;
+  const scoreClass = score >= 70 ? 'grade-pass' : score >= 50 ? 'grade-warn' : 'grade-fail';
+
+  const panel = document.createElement('div');
+  panel.className = 'grade-panel';
+
+  // ── Score line ──────────────────────────────────────────────────────────────
+  const scoreLine = document.createElement('div');
+  scoreLine.className = 'grade-score-line';
+  scoreLine.innerHTML =
+    `<span class="grade-badge ${scoreClass}">● ${score.toFixed(0)} ${passed ? 'PASS' : 'FAIL'}</span>` +
+    `<span class="grade-model">${model || ''}</span>` +
+    (escalated ? `<span class="grade-escalated" title="Local fell below threshold">↑ escalated</span>` : '') +
+    `<button class="grade-toggle" onclick="this.closest('.grade-panel').classList.toggle('expanded')">▸</button>`;
+  panel.appendChild(scoreLine);
+
+  // ── Rubric breakdown (collapsed by default) ─────────────────────────────────
+  const detail = document.createElement('div');
+  detail.className = 'grade-detail';
+
+  if (grade.rubrics && grade.rubrics.length) {
+    const rubricList = document.createElement('div');
+    rubricList.className = 'grade-rubrics';
+    for (const r of grade.rubrics) {
+      const pct = r.score;
+      const barClass = pct >= 70 ? 'bar-pass' : pct >= 40 ? 'bar-warn' : 'bar-fail';
+      rubricList.innerHTML += `
+        <div class="rubric-row">
+          <span class="rubric-name">${r.name}</span>
+          <div class="rubric-bar-wrap">
+            <div class="rubric-bar ${barClass}" style="width:${pct}%"></div>
+          </div>
+          <span class="rubric-score">${pct.toFixed(0)}</span>
+          <span class="rubric-weight">${(r.weight * 100).toFixed(0)}%</span>
+        </div>`;
+    }
+    detail.appendChild(rubricList);
+  }
+
+  // ── Thinking trace (extended thinking — Haiku's reasoning) ──────────────────
+  if (grade.thinking_trace && grade.thinking_trace.length > 0) {
+    const thinkWrap = document.createElement('div');
+    thinkWrap.className = 'thinking-trace';
+    thinkWrap.innerHTML =
+      `<div class="thinking-label">🧠 Grader reasoning (extended thinking)</div>` +
+      `<pre class="thinking-text">${_escapeHtml(grade.thinking_trace)}</pre>`;
+    detail.appendChild(thinkWrap);
+  }
+
+  panel.appendChild(detail);
+  return panel;
+}
+
+function _escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function showThinking() {
@@ -88,12 +157,13 @@ async function sendMessage(e) {
     hideThinking();
 
     _saveSession(data.session_id);
-    appendMessage('assistant', data.response, data.model_used);
+    appendMessage('assistant', data.response, data.model_used, data.grade);
 
     // Update model badge
     const badge = document.getElementById('model-badge');
-    badge.textContent = data.model_used;
-    badge.className = data.model_used === 'frontier' ? 'badge frontier' : 'badge';
+    const isOpus = data.model_used && data.model_used.includes('opus');
+    badge.textContent = isOpus ? 'opus 4.7' : data.model_used;
+    badge.className = isOpus ? 'badge frontier' : 'badge';
 
     // Shell gate
     if (data.pending_confirmation) {

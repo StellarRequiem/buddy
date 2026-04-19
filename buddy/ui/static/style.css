@@ -190,6 +190,84 @@ button[type="submit"]:disabled { opacity: 0.4; cursor: not-allowed; }
 
 h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin: 16px 0 8px; }
 
+/* ── Grade panel ──────────────────────────────────────────────── */
+.grade-panel { margin-top: 6px; }
+
+.grade-score-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.grade-badge {
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  cursor: default;
+}
+.grade-pass  { background: #1f3a1a; color: var(--green); }
+.grade-warn  { background: #2d2200; color: var(--yellow); }
+.grade-fail  { background: #3a1a1a; color: var(--red); }
+.grade-model { color: var(--muted); }
+.grade-escalated { color: var(--accent); font-size: 10px; }
+.grade-toggle {
+  background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 11px; padding: 0 4px;
+  margin-left: auto;
+  transition: transform 0.15s;
+}
+.grade-panel.expanded .grade-toggle { transform: rotate(90deg); }
+
+.grade-detail { display: none; margin-top: 8px; }
+.grade-panel.expanded .grade-detail { display: block; }
+
+.grade-rubrics { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+.rubric-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 28px 30px;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.rubric-name  { color: var(--muted); text-transform: capitalize; }
+.rubric-bar-wrap {
+  background: var(--border);
+  border-radius: 4px;
+  height: 6px;
+  overflow: hidden;
+}
+.rubric-bar   { height: 100%; border-radius: 4px; transition: width 0.3s; }
+.bar-pass     { background: var(--green); }
+.bar-warn     { background: var(--yellow); }
+.bar-fail     { background: var(--red); }
+.rubric-score { color: var(--text); text-align: right; }
+.rubric-weight{ color: var(--muted); text-align: right; }
+
+.thinking-trace {
+  background: #0a1520;
+  border: 1px solid #1a3a5c;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+.thinking-label {
+  font-size: 11px;
+  color: var(--accent);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.thinking-text {
+  font-family: var(--font);
+  font-size: 11px;
+  color: #7cb8e8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 0;
+}
+
 /* ── Forest status ────────────────────────────────────────────── */
 .forest-bar {
   background: #0e1620;

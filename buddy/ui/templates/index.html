@@ -19,6 +19,7 @@
       <button class="tab-btn" onclick="showTab('tasks')">Tasks</button>
       <button class="tab-btn" onclick="showTab('memory')">Memory</button>
       <button class="tab-btn" onclick="showTab('forest')">Forest</button>
+      <button class="tab-btn demo-btn" onclick="showTab('demo')">⚡ Demo</button>
     </nav>
   </header>
 
@@ -62,6 +63,22 @@
          hx-swap="innerHTML">
       Loading...
     </div>
+  </section>
+
+  <!-- ── Demo tab (expected-failure showcase) ─────────────────── -->
+  <section id="tab-demo" class="tab hidden">
+    <div class="tab-toolbar">
+      <span style="color:var(--muted);font-size:.85rem">
+        Expected-failure demo — cus-core rewards agents for <em>refusing correctly</em>
+      </span>
+    </div>
+    <div class="demo-intro">
+      <p>Select a scenario. Opus 4.7 receives a harmful prompt and should refuse.
+         Haiku then grades the <strong>quality of that refusal</strong> with extended thinking.
+         A perfect refusal scores 100.</p>
+    </div>
+    <div id="demo-scenarios" class="demo-scenarios">Loading…</div>
+    <div id="demo-result" class="demo-result hidden"></div>
   </section>
 
   <!-- ── Forest tab ───────────────────────────────────────── -->

@@ -268,6 +268,93 @@ h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
   margin: 0;
 }
 
+/* ── Demo tab ─────────────────────────────────────────────────── */
+.tab-btn.demo-btn { color: var(--accent); border-color: #1f3a5f; }
+.tab-btn.demo-btn:hover { background: #1f3a5f; color: var(--text); }
+.tab-btn.demo-btn.active { background: #1f3a5f; color: var(--text); border-color: var(--accent); }
+
+.demo-intro {
+  background: #0e1e2f;
+  border: 1px solid #1a3a5c;
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.demo-intro strong { color: var(--text); }
+
+.demo-scenarios { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.demo-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.demo-card:hover { border-color: var(--accent); }
+.demo-card-label { font-weight: 600; font-size: 14px; }
+.demo-card-why { font-size: 12px; color: var(--muted); flex: 1; }
+.demo-run-btn {
+  align-self: flex-end;
+  background: #1f3a5f; border: none; color: var(--accent);
+  padding: 4px 14px; border-radius: 20px; cursor: pointer; font-size: 12px;
+}
+
+.demo-loading { padding: 24px; }
+.demo-loading-title { font-weight: 600; margin-bottom: 12px; }
+.demo-step { color: var(--muted); font-size: 13px; padding: 4px 0; }
+.demo-step.active { color: var(--accent); }
+
+.demo-result-header {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px;
+}
+.demo-headline { font-size: 15px; font-weight: 600; }
+
+.demo-expected-failure-note {
+  background: #1a2d1a;
+  border: 1px solid #2a5a2a;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--green);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+.demo-expected-failure-note strong { color: #7dde7d; }
+
+.demo-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.demo-col h3 { margin-top: 12px; }
+.demo-prompt, .demo-response {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  max-height: 200px;
+  overflow-y: auto;
+}
+.demo-prompt { border-color: #3a1a1a; color: #e88; }
+
+.demo-back-btn {
+  margin-top: 20px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 6px 16px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+}
+.demo-back-btn:hover { color: var(--text); border-color: var(--text); }
+
 /* ── Forest status ────────────────────────────────────────────── */
 .forest-bar {
   background: #0e1620;

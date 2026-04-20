@@ -615,3 +615,198 @@ h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
   max-height: 200px;
   overflow-y: auto;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   Tools Tab
+   ══════════════════════════════════════════════════════════ */
+.tools-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tools-count-badge {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 4px;
+}
+.tools-show-disabled {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  margin-left: auto;
+}
+
+/* ── Catalogue grid ─────────────────────────────────── */
+.tools-grid-wrap {
+  padding: 12px 16px 4px;
+  overflow-y: auto;
+  max-height: 46vh;
+}
+.tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
+}
+
+/* Override the Memory-tab tool-card styles for the new grid */
+#tools-tab-grid .tool-card {
+  position: relative;
+  cursor: default;
+}
+#tools-tab-grid .tool-card:hover { border-color: var(--accent); }
+
+/* ── Toggle switch ─────────────────────────────────── */
+.tool-toggle-label {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+.tool-toggle-cb { display: none; }
+.tool-toggle-track {
+  display: inline-block;
+  width: 28px;
+  height: 14px;
+  background: var(--border);
+  border-radius: 7px;
+  position: relative;
+  transition: background 0.2s;
+}
+.tool-toggle-track::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: var(--muted);
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s, background 0.2s;
+}
+/* When checked = disabled, track goes red */
+.tool-toggle-cb:checked + .tool-toggle-track { background: #3d1010; }
+.tool-toggle-cb:checked + .tool-toggle-track::after {
+  transform: translateX(14px);
+  background: var(--red);
+}
+/* When unchecked = enabled, track goes green */
+.tool-toggle-cb:not(:checked) + .tool-toggle-track { background: #0d2d15; }
+.tool-toggle-cb:not(:checked) + .tool-toggle-track::after {
+  background: var(--green);
+}
+
+/* ── Test button on card ───────────────────────────── */
+.tool-test-btn {
+  position: absolute;
+  bottom: 7px;
+  right: 8px;
+  font-size: 10px;
+  padding: 2px 7px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+#tools-tab-grid .tool-card:hover .tool-test-btn { opacity: 1; }
+.tool-test-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ── Test runner panel ─────────────────────────────── */
+.tool-test-panel {
+  margin: 0 16px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.tool-test-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+.tool-test-header select {
+  flex: 1;
+  max-width: 260px;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+}
+.tool-test-params { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.tool-test-param-row { display: flex; align-items: center; gap: 8px; }
+.tool-test-param-label {
+  min-width: 120px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: monospace;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.tool-test-param-type {
+  font-size: 9px;
+  color: #555;
+  margin-left: 4px;
+}
+.tool-test-param-input {
+  flex: 1;
+  max-width: 320px;
+  font-size: 12px;
+  font-family: monospace;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+}
+.tool-test-param-input:focus { border-color: var(--accent); outline: none; }
+.tool-test-no-params { font-size: 11px; color: var(--muted); font-style: italic; }
+.tool-test-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.tool-test-elapsed { font-size: 11px; color: var(--muted); font-family: monospace; }
+.required-star { color: var(--red); margin-left: 2px; }
+
+.tool-test-output {
+  background: #070d14;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+  margin: 0;
+}
+.tool-test-output.test-ok   { border-color: var(--green); }
+.tool-test-output.test-fail { border-color: var(--red); color: var(--red); }
+
+/* ── Metrics section ───────────────────────────────── */
+.tools-metrics-wrap {
+  padding: 0 16px 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.tools-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}

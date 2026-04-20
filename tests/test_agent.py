@@ -171,3 +171,125 @@ async def test_run_agent_collect_no_tools(monkeypatch):
     assert "Hello from model" in text
     assert tools_called == 0
     assert shell_gate is None
+
+
+@pytest.mark.asyncio
+async def test_run_agent_collect_single_tool(monkeypatch):
+    """
+    Model emits one tool call (get_datetime), real tool executes, then model
+    returns final text.  Tools called == 1 and final text is present.
+    """
+    from buddy.llm.agent import run_agent_collect
+
+    call_count = {"n": 0}
+
+    async def _mock_stream(messages, model):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # First turn: model wants to call get_datetime
+            yield ("thinking", "")
+            yield ("tool_calls", [{
+                "function": {"name": "get_datetime", "arguments": {}}
+            }])
+        else:
+            # Second turn: model synthesises final answer
+            yield ("thinking", "The current date and time is provided above.")
+
+    monkeypatch.setattr("buddy.llm.agent._ollama_stream_with_tools", _mock_stream)
+
+    text, tools_called, shell_gate = await run_agent_collect(
+        [{"role": "user", "content": "What time is it?"}]
+    )
+    assert tools_called == 1
+    assert shell_gate is None
+    assert "date" in text.lower() or "time" in text.lower() or "provided" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_collect_two_tool_chain(monkeypatch, tmp_path):
+    """
+    Two-step chain: write a note then read it back.
+    Verifies parallel tool execution paths and message accumulation.
+    """
+    from buddy import config
+    monkeypatch.setattr(config.settings, "vault_path", tmp_path)
+    from buddy.llm.agent import run_agent_collect
+
+    call_count = {"n": 0}
+
+    async def _mock_stream(messages, model):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            yield ("thinking", "")
+            yield ("tool_calls", [
+                {"function": {"name": "note_write",
+                               "arguments": {"title": "test", "content": "hello"}}},
+            ])
+        elif call_count["n"] == 2:
+            yield ("thinking", "")
+            yield ("tool_calls", [
+                {"function": {"name": "note_read", "arguments": {"title": "test"}}},
+            ])
+        else:
+            yield ("thinking", "Note contains: hello")
+
+    monkeypatch.setattr("buddy.llm.agent._ollama_stream_with_tools", _mock_stream)
+
+    text, tools_called, shell_gate = await run_agent_collect(
+        [{"role": "user", "content": "write then read note"}]
+    )
+    assert tools_called == 2
+    assert shell_gate is None
+    assert "hello" in text.lower() or "note" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_collect_shell_gate_stops_loop(monkeypatch):
+    """
+    When a tool returns the SHELL_GATE_PENDING sentinel the loop must stop
+    and surface shell_gate payload.  tools_called increments for the shell call.
+    """
+    from buddy.llm.agent import run_agent_collect, _SHELL_GATE_PREFIX
+
+    async def _mock_stream(messages, model):
+        yield ("thinking", "")
+        yield ("tool_calls", [
+            {"function": {"name": "shell_execute", "arguments": {"command": "ls"}}}
+        ])
+
+    monkeypatch.setattr("buddy.llm.agent._ollama_stream_with_tools", _mock_stream)
+
+    text, tools_called, shell_gate = await run_agent_collect(
+        [{"role": "user", "content": "list files"}]
+    )
+    assert tools_called == 1
+    assert shell_gate is not None
+    assert "command" in shell_gate   # requires_confirmation returns dict with "command"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_collect_max_iterations(monkeypatch):
+    """
+    When the model always returns tool calls, the loop must stop at
+    max_iterations and NOT run forever.
+    """
+    from buddy.llm.agent import run_agent_collect
+
+    async def _mock_stream(messages, model):
+        yield ("thinking", "thinking…")
+        yield ("tool_calls", [
+            {"function": {"name": "get_datetime", "arguments": {}}}
+        ])
+
+    monkeypatch.setattr("buddy.llm.agent._ollama_stream_with_tools", _mock_stream)
+    # Also mock the final synthesis call so it doesn't hit Ollama
+    async def _mock_stream_final(messages, model):
+        yield "done"
+    monkeypatch.setattr("buddy.llm.agent._ollama_stream_final", _mock_stream_final)
+
+    text, tools_called, shell_gate = await run_agent_collect(
+        [{"role": "user", "content": "go"}],
+        max_iterations=3,
+    )
+    assert tools_called == 3   # exactly max_iterations tool calls
+    assert shell_gate is None

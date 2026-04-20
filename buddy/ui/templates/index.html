@@ -18,6 +18,7 @@
       <button class="tab-btn active" onclick="showTab('chat')">Chat</button>
       <button class="tab-btn" onclick="showTab('tasks')">Tasks</button>
       <button class="tab-btn" onclick="showTab('memory')">Memory</button>
+      <button class="tab-btn" onclick="showTab('tools')">Tools</button>
       <button class="tab-btn" onclick="showTab('forest')">Forest</button>
       <button class="tab-btn demo-btn" onclick="showTab('demo')">⚡ Demo</button>
     </nav>
@@ -131,10 +132,46 @@
          hx-swap="innerHTML">
       Loading...
     </div>
-    <h3>Tool Metrics <button onclick="loadToolMetrics()" style="font-size:11px;margin-left:8px;padding:2px 8px">↻</button></h3>
-    <div id="tool-metrics-panel" style="color:var(--muted);font-size:12px">Click ↻ to load</div>
-    <h3>Available Tools <span id="tools-count" style="font-size:11px;color:var(--muted)"></span></h3>
-    <div id="tools-panel">Loading…</div>
+  </section>
+
+  <!-- ── Tools tab ──────────────────────────────────────────── -->
+  <section id="tab-tools" class="tab hidden">
+    <div class="tab-toolbar tools-toolbar">
+      <input id="tools-filter" type="text" placeholder="Filter tools…" oninput="filterTools(this.value)">
+      <button onclick="loadToolsTab(true)">↻ Refresh</button>
+      <span id="tools-tab-count" class="tools-count-badge"></span>
+      <label class="tools-show-disabled">
+        <input type="checkbox" id="tools-show-disabled" onchange="filterTools(document.getElementById('tools-filter').value)">
+        show disabled
+      </label>
+    </div>
+
+    <!-- ── Catalogue grid ─────────────────────────────────── -->
+    <div class="tools-grid-wrap">
+      <div id="tools-tab-grid" class="tools-grid">Loading…</div>
+    </div>
+
+    <!-- ── Test runner ────────────────────────────────────── -->
+    <div class="tool-test-panel">
+      <div class="tool-test-header">
+        <span>🧪 Tool test runner</span>
+        <select id="tool-test-select" onchange="onToolTestSelect(this.value)">
+          <option value="">— select a tool —</option>
+        </select>
+      </div>
+      <div id="tool-test-params" class="tool-test-params"></div>
+      <div class="tool-test-actions hidden" id="tool-test-actions">
+        <button onclick="runToolTest()">▶ Run</button>
+        <span id="tool-test-elapsed" class="tool-test-elapsed"></span>
+      </div>
+      <pre id="tool-test-output" class="tool-test-output hidden"></pre>
+    </div>
+
+    <!-- ── Metrics ─────────────────────────────────────────── -->
+    <div class="tools-metrics-wrap">
+      <h3 class="tools-section-title">Call metrics <button onclick="loadToolMetrics()" style="font-size:11px;margin-left:8px;padding:2px 8px">↻</button></h3>
+      <div id="tool-metrics-panel" style="color:var(--muted);font-size:12px">Switch to this tab to load.</div>
+    </div>
   </section>
 </div>
 

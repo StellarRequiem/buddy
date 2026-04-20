@@ -102,6 +102,35 @@ async def set_test_mode(req: TestModeRequest):
     return {"test_mode": _test_mode, "message": msg, "freed": freed, "loaded": loaded}
 
 
+@router.get("/config", dependencies=[Depends(_verify_admin_token)])
+async def runtime_config():
+    """
+    Show the live (possibly runtime-mutated) configuration.
+    Useful for confirming qwen3 auto-upgrade fired, checking disabled_tools, etc.
+    Sensitive fields (anthropic_api_key, admin_token) are redacted.
+    """
+    return {
+        "conductor_model":      cfg.conductor_model,
+        "local_model":          cfg.local_model,
+        "fallback_local_model": cfg.fallback_local_model,
+        "opus_model":           cfg.opus_model,
+        "use_agent_loop":       cfg.use_agent_loop,
+        "max_agent_iterations": cfg.max_agent_iterations,
+        "agent_timeout_seconds": cfg.agent_timeout_seconds,
+        "disabled_tools":       cfg.disabled_tools,
+        "chat_history_limit":   cfg.chat_history_limit,
+        "escalation_confidence_threshold": cfg.escalation_confidence_threshold,
+        "escalation_keywords":  cfg.escalation_keywords,
+        "ollama_host":          cfg.ollama_host,
+        "forest_host":          cfg.forest_host,
+        "vault_path":           str(cfg.vault_path),
+        "test_mode":            is_test_mode(),
+        "anthropic_api_key":    "***" if cfg.anthropic_api_key else "(not set)",
+        "brave_search_api_key": "***" if cfg.brave_search_api_key else "(not set)",
+        "admin_token":          "***" if cfg.admin_token else "(not set)",
+    }
+
+
 @router.get("/tool-metrics", dependencies=[Depends(_verify_admin_token)])
 async def tool_metrics():
     """

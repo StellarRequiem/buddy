@@ -156,13 +156,14 @@ async def test_note_write_read(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_agent_collect_no_tools(monkeypatch):
-    """When model returns plain text on first call, collect returns it."""
+    """When model returns plain text on first call (no tool_calls), collect returns it."""
     from buddy.llm.agent import run_agent_collect
 
-    async def _mock_tool_call(messages, model):
-        return {"message": {"content": "Hello from model", "tool_calls": None}}
+    async def _mock_stream_with_tools(messages, model):
+        yield ("thinking", "Hello from model")
+        # no "tool_calls" event → no tools called
 
-    monkeypatch.setattr("buddy.llm.agent._ollama_tool_call", _mock_tool_call)
+    monkeypatch.setattr("buddy.llm.agent._ollama_stream_with_tools", _mock_stream_with_tools)
 
     text, tools_called, shell_gate = await run_agent_collect(
         [{"role": "user", "content": "hi"}]

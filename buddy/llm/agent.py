@@ -95,6 +95,7 @@ async def _ollama_tool_call(messages: list[dict], model: str) -> dict:
     """
     POST /api/chat with tool schemas (non-streaming).
     Returns the full parsed JSON response.
+    Used for the non-streaming /chat endpoint (run_agent_collect).
     """
     async with httpx.AsyncClient(timeout=180) as client:
         resp = await client.post(
@@ -109,6 +110,53 @@ async def _ollama_tool_call(messages: list[dict], model: str) -> dict:
         )
         resp.raise_for_status()
         return resp.json()
+
+
+async def _ollama_stream_with_tools(
+    messages: list[dict], model: str
+) -> AsyncGenerator[tuple[str, Any], None]:
+    """
+    Stream /api/chat WITH tools enabled.
+    Yields (event_type, data) tuples:
+      ("thinking", str)    — content tokens streamed before tool calls are decided
+      ("tool_calls", list) — final tool calls from the done chunk
+      ("text", str)        — final text token when no tool calls are made
+
+    Why streaming instead of non-streaming here:
+    - qwen3 emits <think> reasoning tokens before calling tools — this gives
+      the user live visibility into the model's reasoning (highly valuable UX)
+    - qwen2.5 typically emits no thinking tokens, so behaviour is equivalent
+      to non-streaming but we keep one code path for both models
+    """
+    async with httpx.AsyncClient(timeout=180) as client:
+        async with client.stream(
+            "POST",
+            f"{cfg.ollama_host}/api/chat",
+            json={
+                "model": model,
+                "messages": messages,
+                "tools": TOOL_SCHEMAS,
+                "stream": True,
+                "options": {"temperature": 0.4},
+            },
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg = chunk.get("message", {})
+                content = msg.get("content", "")
+                if content:
+                    yield ("thinking", content)
+                if chunk.get("done"):
+                    tool_calls = msg.get("tool_calls") or []
+                    if tool_calls:
+                        yield ("tool_calls", tool_calls)
+                    break
 
 
 async def _ollama_stream_final(messages: list[dict], model: str) -> AsyncGenerator[str, None]:
@@ -203,27 +251,39 @@ async def run_agent_loop(
                    "token": f"\n\n[Agent timed out after {cfg.agent_timeout_seconds}s]\n\n"}
             break
 
-        # ── Ask the model ──────────────────────────────────────────────────────
+        # ── Ask the model (streaming with tools) ──────────────────────────────
+        # Content tokens stream live as regular "token" events.
+        # qwen3: emits <think> reasoning tokens before tool calls — user sees
+        #        the model think in real time. qwen2.5: typically no content
+        #        before tool_calls, so behaviour is the same as non-streaming.
+        # Tool calls arrive in the final done chunk.
+        tool_calls: list[dict] = []
+        streamed_content = False
         try:
-            resp = await _ollama_tool_call(loop_messages, model=target_model)
+            async for evt_type, evt_data in _ollama_stream_with_tools(
+                loop_messages, model=target_model
+            ):
+                if evt_type == "thinking":
+                    # Stream content tokens directly — they are either the model's
+                    # reasoning preamble (before tools) or the final answer (no tools).
+                    yield {"type": "token", "token": evt_data}
+                    streamed_content = True
+                elif evt_type == "tool_calls":
+                    tool_calls = evt_data
         except Exception as exc:
             yield {"type": "error", "message": f"Ollama request failed: {exc}"}
             return
 
-        msg = resp.get("message", {})
-        tool_calls: list[dict] = msg.get("tool_calls") or []
-        content: str = (msg.get("content") or "").strip()
-
-        # ── No tool calls → model is done ─────────────────────────────────────
+        # ── No tool calls → streamed content was the final answer ─────────────
         if not tool_calls:
-            if content:
-                # Deliver the buffered content in smooth ~40-char chunks
-                for i in range(0, len(content), _TOKEN_CHUNK):
-                    yield {"type": "token", "token": content[i:i + _TOKEN_CHUNK]}
-            else:
-                # Rare: empty response — make a fresh streaming call (no tools)
+            if not streamed_content:
+                # Rare: empty response — retry once with fresh streaming call
+                retried = False
                 async for token in _ollama_stream_final(loop_messages, model=target_model):
                     yield {"type": "token", "token": token}
+                    retried = True
+                if not retried:
+                    yield {"type": "token", "token": "(no response)"}
             break
 
         # ── Emit all tool_call events upfront (UI shows pending state) ─────────
@@ -303,6 +363,7 @@ async def run_agent_collect(
     """
     Collect all tokens into a string.
     Returns (full_text, tools_called, shell_gate_payload | None).
+    Token and thinking events both contribute to full_text.
     """
     tokens: list[str] = []
     tools_called = 0
@@ -312,7 +373,7 @@ async def run_agent_collect(
                                       max_iterations=max_iterations,
                                       session_id=session_id):
         etype = event.get("type")
-        if etype == "token":
+        if etype in ("token", "thinking"):
             tokens.append(event["token"])
         elif etype == "agent_done":
             tools_called = event["tools_called"]

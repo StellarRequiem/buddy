@@ -260,7 +260,7 @@ async def chat_stream(req: ChatRequest):
                 ):
                     etype = event.get("type")
 
-                    if etype == "token":
+                    if etype in ("token", "thinking"):
                         token = event["token"]
                         full_text += token
                         yield f"data: {json.dumps({'token': token})}\n\n"

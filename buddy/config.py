@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     max_agent_iterations: int = 6
     # True = native tool-calling loop; False = legacy text-directive parsing
     use_agent_loop: bool = True
+    # Hard wall-clock timeout for a single agent run (seconds).
+    # Prevents runaway loops from blocking the server indefinitely.
+    agent_timeout_seconds: int = 300
+    # Comma-separated tool names to disable at runtime (case-sensitive).
+    # Example: DISABLED_TOOLS=shell_execute,run_python
+    disabled_tools: list[str] = []
 
     # ── Web search ─────────────────────────────────────────────────────────
     # Set for full web search results. Falls back to DuckDuckGo when empty.

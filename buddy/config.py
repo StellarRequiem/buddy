@@ -43,6 +43,22 @@ class Settings(BaseSettings):
     # Extended thinking budget for grader (tokens). 0 = disabled.
     grader_thinking_budget: int = 1024
 
+    # ── Agent / conductor ──────────────────────────────────────────────────
+    # The tool-calling conductor model. qwen2.5:14b supports native function
+    # calling and is installed. Recommended upgrade for significantly stronger
+    # tool reasoning without increasing VRAM footprint:
+    #   ollama pull qwen3:14b
+    # then set CONDUCTOR_MODEL=qwen3:14b in .env
+    conductor_model: str = "qwen2.5:14b"
+    # Maximum tool-call iterations before returning whatever the model has
+    max_agent_iterations: int = 6
+    # True = native tool-calling loop; False = legacy text-directive parsing
+    use_agent_loop: bool = True
+
+    # ── Web search ─────────────────────────────────────────────────────────
+    # Set for full web search results. Falls back to DuckDuckGo when empty.
+    brave_search_api_key: str = ""
+
     # ── Ollama ─────────────────────────────────────────────────────────────
     ollama_host: str = "http://127.0.0.1:11434"
 

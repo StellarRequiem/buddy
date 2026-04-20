@@ -3,11 +3,26 @@ POST /chat        — send a message, get a response
 POST /chat/stream — same but streams tokens via SSE
 GET  /sessions    — list session IDs
 GET  /history/:id — conversation history
+
+Streaming SSE event types:
+  {"token": "..."}
+      Incremental token.
+  {"type": "tool_call",   "name": "...", "args": {...}, "iteration": N}
+      Agent is calling a tool (show in activity panel).
+  {"type": "tool_result", "name": "...", "preview": "...", "iteration": N}
+      Tool returned a result.
+  {"type": "shell_gate",  "payload": {...}}
+      Shell command awaiting human approval.
+  {"done": true, "session_id": "...", "model": "...",
+   "escalated": false, "grade": {...}|null, "tools_called": N,
+   "pending_confirmation": {...}|null}
+      Stream complete.
+  {"error": "..."}
+      Unrecoverable failure.
 """
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from typing import Any
 
@@ -19,20 +34,16 @@ from pydantic import BaseModel
 
 from buddy.config import settings as cfg
 from buddy.llm.prompts import build_chat_prompt
-from buddy.llm.router import route, local_chat_stream, opus_chat, grade_response_score, RouteResult, _GRADE_EXECUTOR, _should_escalate_on_keywords
+from buddy.llm.router import (
+    route, local_chat_stream, opus_chat, grade_response_score,
+    RouteResult, _GRADE_EXECUTOR, _should_escalate_on_keywords,
+    _local_grade_async,
+)
+from buddy.llm.agent import run_agent_loop, run_agent_collect
 from buddy.memory.store import append_message, get_history, upsert_fact, list_sessions
 from buddy.memory.vectors import search_memory, upsert_memory
-from buddy.tools.filesystem import read_file
-from buddy.tools.shell import requires_confirmation
-from buddy.tools.plugin_loader import call_plugin
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-_REMEMBER_RE  = re.compile(r"^REMEMBER:\s*(\S+?)=(.+)$", re.MULTILINE)
-_READ_FILE_RE = re.compile(r"^READ_FILE:\s*(.+)$", re.MULTILINE)
-_SHELL_RE     = re.compile(r"^SHELL:\s*(.+)$", re.MULTILINE)
-_SEARCH_RE    = re.compile(r"^SEARCH:\s*(.+)$", re.MULTILINE)
-_PLUGIN_RE    = re.compile(r"^PLUGIN:\s*(\S+)\s*(.*?)$", re.MULTILINE)
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
@@ -54,8 +65,8 @@ class GradeOut(BaseModel):
     composite_score: float
     passed: bool
     rubrics: list[RubricScoreOut]
-    thinking_trace: str   # empty string when thinking not available
-    escalated: bool       # True when local was tried but fell below threshold
+    thinking_trace: str
+    escalated: bool
 
 
 class ChatResponse(BaseModel):
@@ -63,30 +74,13 @@ class ChatResponse(BaseModel):
     response: str
     pending_confirmation: dict | None = None
     model_used: str
-    grade: GradeOut | None = None    # null when grading unavailable
+    grade: GradeOut | None = None
+    tools_called: int = 0
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _extract_tool_calls(response: str) -> dict:
-    remember   = {m.group(1): m.group(2).strip() for m in _REMEMBER_RE.finditer(response)}
-    read_files = [m.group(1).strip() for m in _READ_FILE_RE.finditer(response)]
-    shells     = [m.group(1).strip() for m in _SHELL_RE.finditer(response)]
-    plugins    = [(m.group(1).strip(), m.group(2).strip()) for m in _PLUGIN_RE.finditer(response)]
-    return {"remember": remember, "read_files": read_files, "shells": shells, "plugins": plugins}
-
-
-def _clean_response(text: str) -> str:
-    text = _REMEMBER_RE.sub("", text)
-    text = _READ_FILE_RE.sub("", text)
-    text = _SHELL_RE.sub("", text)
-    text = _SEARCH_RE.sub("", text)
-    text = _PLUGIN_RE.sub("", text)
-    return text.strip()
-
-
-def _grade_out(result: RouteResult) -> GradeOut | None:
-    """Convert RouteResult.grade → GradeOut for the API response."""
+def _grade_out(result: RouteResult, escalated: bool = False) -> GradeOut | None:
     if result.grade is None:
         return None
     g = result.grade
@@ -99,11 +93,27 @@ def _grade_out(result: RouteResult) -> GradeOut | None:
             for r in g.rubrics
         ],
         thinking_trace=g.thinking_trace,
-        escalated=result.escalated,
+        escalated=escalated,
     )
 
 
-# ── Endpoint ───────────────────────────────────────────────────────────────────
+def _grade_dict(grade_out: GradeOut | None) -> dict | None:
+    if grade_out is None:
+        return None
+    return {
+        "composite_score": grade_out.composite_score,
+        "passed": grade_out.passed,
+        "rubrics": [
+            {"name": r.name, "score": r.score,
+             "weight": r.weight, "weighted": r.weighted}
+            for r in grade_out.rubrics
+        ],
+        "thinking_trace": grade_out.thinking_trace,
+        "escalated": grade_out.escalated,
+    }
+
+
+# ── Non-streaming endpoint ─────────────────────────────────────────────────────
 
 @router.post("", response_model=ChatResponse)
 async def chat(req: ChatRequest):
@@ -111,102 +121,6 @@ async def chat(req: ChatRequest):
 
     history = get_history(session_id, limit=cfg.chat_history_limit)
     loop = asyncio.get_event_loop()
-    # Skip vector search for trivial queries — saves ~500ms and avoids noise
-    if len(req.message) >= 20:
-        mem_ctx = await loop.run_in_executor(_GRADE_EXECUTOR, search_memory, req.message, 3)
-    else:
-        mem_ctx = []
-    messages = build_chat_prompt(history, req.message, mem_ctx)
-
-    try:
-        result: RouteResult = await route(
-            messages, session_id=session_id, force_frontier=req.force_frontier
-        )
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
-    raw_response = result.response
-
-    # ── Tool directives ────────────────────────────────────────────────────────
-    directives = _extract_tool_calls(raw_response)
-
-    for k, v in directives["remember"].items():
-        upsert_fact(k, v, source="assistant_inferred")
-
-    tool_context = ""
-    for path in directives["read_files"][:2]:
-        try:
-            tool_context += f"\n\n[FILE: {path}]\n{read_file(path)[:2000]}"
-        except Exception as e:
-            tool_context += f"\n\n[FILE ERROR: {path}] {e}"
-
-    # PLUGIN: name args → execute plugin, inject output
-    for plugin_name, plugin_args in directives["plugins"][:3]:
-        result_text = call_plugin(plugin_name, plugin_args)
-        tool_context += f"\n\n[PLUGIN {plugin_name}]\n{result_text}"
-
-    if tool_context:
-        messages.append({"role": "assistant", "content": raw_response})
-        messages.append({"role": "user",
-                         "content": f"Tool results:{tool_context}\n\nIncorporate these results and continue."})
-        try:
-            result = await route(messages, session_id=session_id,
-                                 force_frontier=req.force_frontier)
-            raw_response = result.response
-        except Exception:
-            pass
-
-    # ── Shell gate ─────────────────────────────────────────────────────────────
-    pending_confirmation = None
-    if directives["shells"]:
-        try:
-            pending_confirmation = requires_confirmation(directives["shells"][0])
-        except Exception as e:
-            raw_response += f"\n\n[Shell blocked: {e}]"
-
-    clean = _clean_response(raw_response)
-
-    # ── Persist ────────────────────────────────────────────────────────────────
-    append_message(session_id, "user", req.message)
-    append_message(session_id, "assistant", clean, model=result.model_used)
-
-    # Memory filter — only embed significant exchanges (cus-core score ≥ 70)
-    _trivial = len(req.message) < 20 or len(clean) < 50
-    if not _trivial:
-        mem_score = (result.grade.composite_score
-                     if result.grade else await grade_response_score(clean, req.message))
-        if mem_score >= 70.0:
-            upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")
-
-    return ChatResponse(
-        session_id=session_id,
-        response=clean,
-        pending_confirmation=pending_confirmation,
-        model_used=result.model_used,
-        grade=_grade_out(result),
-    )
-
-
-@router.post("/stream")
-async def chat_stream(req: ChatRequest):
-    """
-    SSE streaming endpoint — yields tokens as they arrive.
-
-    Event types:
-      data: {"token": "..."}
-          Incremental token (or full Opus response as one chunk).
-      data: {"done": true, "session_id": "...", "model": "...",
-             "escalated": false, "grade": {...}|null,
-             "pending_confirmation": {...}|null}
-          Stream complete — grade panel data and shell-gate info included.
-      data: {"error": "..."}
-          Unrecoverable failure.
-    """
-    session_id = req.session_id or str(uuid.uuid4())
-
-    history = get_history(session_id, limit=cfg.chat_history_limit)
-    loop = asyncio.get_event_loop()
-    # Skip vector search for trivial queries — saves ~500ms
     if len(req.message) >= 20:
         mem_ctx = await loop.run_in_executor(_GRADE_EXECUTOR, search_memory, req.message, 3)
     else:
@@ -215,89 +129,192 @@ async def chat_stream(req: ChatRequest):
 
     import os as _os
     api_key = cfg.anthropic_api_key or _os.environ.get("ANTHROPIC_API_KEY", "")
-
-    # Routing decision (mirrors router.route() pre-checks)
     use_frontier = (
         (req.force_frontier and api_key)
         or (api_key and _should_escalate_on_keywords(req.message))
     )
-    # keyword escalation = escalated flag; manual 🌐 = not escalated
+    escalated = use_frontier and not req.force_frontier
+
+    pending_confirmation: dict | None = None
+    tools_called = 0
+    grade_out: GradeOut | None = None
+
+    try:
+        if use_frontier:
+            result = await opus_chat(messages, session_id=session_id)
+            result.escalated = escalated
+            clean = result.response.strip()
+            grade_out = _grade_out(result, escalated=escalated)
+            model_used = result.model_used
+        elif cfg.use_agent_loop:
+            # ── Apex Predator: native tool-calling loop ────────────────────────
+            full_text, tools_called, shell_gate = await run_agent_collect(
+                messages, model=cfg.conductor_model,
+                max_iterations=cfg.max_agent_iterations,
+            )
+            pending_confirmation = shell_gate
+            clean = full_text.strip()
+            model_used = cfg.conductor_model
+            # Grade post-collect
+            grade_detail = await _local_grade_async(clean, context=req.message, timeout=45.0)
+            if grade_detail:
+                from buddy.llm.router import GradeDetail, RubricScore
+                grade_out = GradeOut(
+                    composite_score=grade_detail.composite_score,
+                    passed=grade_detail.passed,
+                    rubrics=[
+                        RubricScoreOut(name=r.name, score=r.score,
+                                       weight=r.weight, weighted=r.weighted)
+                        for r in grade_detail.rubrics
+                    ],
+                    thinking_trace=grade_detail.thinking_trace,
+                    escalated=False,
+                )
+        else:
+            # Legacy route
+            result = await route(messages, session_id=session_id,
+                                 force_frontier=req.force_frontier)
+            clean = result.response.strip()
+            grade_out = _grade_out(result, escalated=result.escalated)
+            model_used = result.model_used
+
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    # ── Persist ────────────────────────────────────────────────────────────────
+    append_message(session_id, "user", req.message)
+    append_message(session_id, "assistant", clean, model=model_used)
+
+    _trivial = len(req.message) < 20 or len(clean) < 50
+    if not _trivial:
+        mem_score = (grade_out.composite_score
+                     if grade_out else await grade_response_score(clean, req.message))
+        if mem_score >= 70.0:
+            upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")
+
+    return ChatResponse(
+        session_id=session_id,
+        response=clean,
+        pending_confirmation=pending_confirmation,
+        model_used=model_used,
+        grade=grade_out,
+        tools_called=tools_called,
+    )
+
+
+# ── Streaming endpoint ─────────────────────────────────────────────────────────
+
+@router.post("/stream")
+async def chat_stream(req: ChatRequest):
+    session_id = req.session_id or str(uuid.uuid4())
+
+    history = get_history(session_id, limit=cfg.chat_history_limit)
+    loop = asyncio.get_event_loop()
+    if len(req.message) >= 20:
+        mem_ctx = await loop.run_in_executor(_GRADE_EXECUTOR, search_memory, req.message, 3)
+    else:
+        mem_ctx = []
+    messages = build_chat_prompt(history, req.message, mem_ctx)
+
+    import os as _os
+    api_key = cfg.anthropic_api_key or _os.environ.get("ANTHROPIC_API_KEY", "")
+    use_frontier = (
+        (req.force_frontier and api_key)
+        or (api_key and _should_escalate_on_keywords(req.message))
+    )
     pre_escalated: bool = use_frontier and not req.force_frontier
 
     async def generate():
         full_text = ""
         model_used = ""
-        grade = None
+        grade_out: GradeOut | None = None
         final_escalated = pre_escalated
+        tools_called = 0
+        pending_confirmation: dict | None = None
 
         try:
             if use_frontier:
-                # Opus: non-streaming SDK call, delivered as a single token chunk
+                # Opus: non-streaming SDK call, single chunk
                 result = await opus_chat(messages, session_id=session_id)
                 result.escalated = pre_escalated
                 full_text = result.response
                 model_used = result.model_used
-                grade = result.grade
+                g_out = _grade_out(result, escalated=pre_escalated)
+                grade_out = g_out
                 yield f"data: {json.dumps({'token': full_text})}\n\n"
 
+            elif cfg.use_agent_loop:
+                # ── Apex Predator: stream agent events ────────────────────────
+                model_used = cfg.conductor_model
+                async for event in run_agent_loop(
+                    messages,
+                    model=cfg.conductor_model,
+                    max_iterations=cfg.max_agent_iterations,
+                ):
+                    etype = event.get("type")
+
+                    if etype == "token":
+                        token = event["token"]
+                        full_text += token
+                        yield f"data: {json.dumps({'token': token})}\n\n"
+
+                    elif etype == "tool_call":
+                        yield f"data: {json.dumps(event)}\n\n"
+
+                    elif etype == "tool_result":
+                        yield f"data: {json.dumps(event)}\n\n"
+
+                    elif etype == "shell_gate":
+                        pending_confirmation = event["payload"]
+                        # Don't forward yet — included in done payload
+
+                    elif etype == "agent_done":
+                        tools_called = event.get("tools_called", 0)
+
+                    elif etype == "error":
+                        yield f"data: {json.dumps({'error': event['message']})}\n\n"
+                        return
+
+                # Grade after agent completes
+                grade_detail = await _local_grade_async(
+                    full_text, context=req.message, timeout=45.0
+                )
+                if grade_detail:
+                    grade_out = GradeOut(
+                        composite_score=grade_detail.composite_score,
+                        passed=grade_detail.passed,
+                        rubrics=[
+                            RubricScoreOut(name=r.name, score=r.score,
+                                           weight=r.weight, weighted=r.weighted)
+                            for r in grade_detail.rubrics
+                        ],
+                        thinking_trace=grade_detail.thinking_trace,
+                        escalated=False,
+                    )
+
             else:
-                # Local model: stream tokens as they arrive
+                # Legacy streaming path
                 model_used = cfg.local_model
                 async for token in local_chat_stream(messages):
                     full_text += token
                     yield f"data: {json.dumps({'token': token})}\n\n"
+                grade_detail = await _local_grade_async(
+                    full_text, context=req.message, timeout=45.0
+                )
+                if grade_detail:
+                    grade_out = GradeOut(
+                        composite_score=grade_detail.composite_score,
+                        passed=grade_detail.passed,
+                        rubrics=[
+                            RubricScoreOut(name=r.name, score=r.score,
+                                           weight=r.weight, weighted=r.weighted)
+                            for r in grade_detail.rubrics
+                        ],
+                        thinking_trace=grade_detail.thinking_trace,
+                        escalated=False,
+                    )
 
-                # Grade post-stream — tokens already delivered, no client wait
-                grade = await _local_grade_async(full_text, context=req.message, timeout=45.0)
-
-            # ── Tool directives ────────────────────────────────────────────────
-            directives = _extract_tool_calls(full_text)
-
-            # REMEMBER: key=value → persist as user facts
-            for k, v in directives["remember"].items():
-                upsert_fact(k, v, source="assistant_inferred")
-
-            # READ_FILE: fetch file contents, do a follow-up LLM call
-            tool_context = ""
-            for path in directives["read_files"][:2]:
-                try:
-                    tool_context += f"\n\n[FILE: {path}]\n{read_file(path)[:2000]}"
-                except Exception as e:
-                    tool_context += f"\n\n[FILE ERROR: {path}] {e}"
-
-            # PLUGIN: name args → execute plugin, inject output
-            for plugin_name, plugin_args in directives["plugins"][:3]:
-                result_text = call_plugin(plugin_name, plugin_args)
-                tool_context += f"\n\n[PLUGIN {plugin_name}]\n{result_text}"
-
-            if tool_context:
-                follow_msgs = list(messages)
-                follow_msgs.append({"role": "assistant", "content": full_text})
-                follow_msgs.append({"role": "user",
-                                    "content": f"Tool results:{tool_context}\n\nIncorporate these results and continue."})
-                try:
-                    if use_frontier:
-                        follow = await opus_chat(follow_msgs, session_id=session_id)
-                        follow_text = follow.response
-                        yield f"data: {json.dumps({'token': chr(10) + chr(10) + follow_text})}\n\n"
-                    else:
-                        follow_text = ""
-                        async for token in local_chat_stream(follow_msgs):
-                            follow_text += token
-                            yield f"data: {json.dumps({'token': token})}\n\n"
-                    full_text = full_text + "\n\n" + follow_text
-                except Exception:
-                    pass
-
-            # SHELL: queue pending confirmation gate
-            pending_confirmation = None
-            if directives["shells"]:
-                try:
-                    pending_confirmation = requires_confirmation(directives["shells"][0])
-                except Exception:
-                    pass
-
-            clean = _clean_response(full_text)
+            clean = full_text.strip()
 
             # ── Persist ────────────────────────────────────────────────────────
             append_message(session_id, "user", req.message)
@@ -305,32 +322,19 @@ async def chat_stream(req: ChatRequest):
 
             _trivial = len(req.message) < 20 or len(clean) < 50
             if not _trivial:
-                mem_score = (grade.composite_score
-                             if grade else await grade_response_score(clean, req.message))
+                mem_score = (grade_out.composite_score
+                             if grade_out else await grade_response_score(clean, req.message))
                 if mem_score >= 70.0:
                     upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")
 
-            # ── Build done payload ─────────────────────────────────────────────
-            grade_payload = None
-            if grade:
-                grade_payload = {
-                    "composite_score": grade.composite_score,
-                    "passed": grade.passed,
-                    "rubrics": [
-                        {"name": r.name, "score": r.score,
-                         "weight": r.weight, "weighted": r.weighted}
-                        for r in grade.rubrics
-                    ],
-                    "thinking_trace": grade.thinking_trace,
-                    "escalated": final_escalated,
-                }
-
-            done_payload: dict = {
+            # ── Done payload ───────────────────────────────────────────────────
+            done_payload: dict[str, Any] = {
                 "done": True,
                 "session_id": session_id,
                 "model": model_used,
                 "escalated": final_escalated,
-                "grade": grade_payload,
+                "tools_called": tools_called,
+                "grade": _grade_dict(grade_out),
             }
             if pending_confirmation:
                 done_payload["pending_confirmation"] = pending_confirmation

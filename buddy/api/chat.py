@@ -367,3 +367,32 @@ async def sessions():
 @router.get("/history/{session_id}")
 async def history(session_id: str, limit: int = 40):
     return {"messages": get_history(session_id, limit=limit)}
+
+
+@router.get("/export/{session_id}")
+async def export_session(session_id: str, limit: int = 200):
+    """
+    Export a session as a markdown document.
+    Returns plain text with Content-Disposition: attachment.
+    """
+    from fastapi.responses import PlainTextResponse
+    msgs = get_history(session_id, limit=limit)
+    if not msgs:
+        raise HTTPException(status_code=404, detail="Session not found or empty")
+
+    lines = [f"# Buddy Session Export\n\n**Session:** `{session_id}`\n"]
+    for m in msgs:
+        role = m["role"].capitalize()
+        model_note = f" *(via {m['model']})*" if m.get("model") else ""
+        ts = m.get("ts", "")[:16] if m.get("ts") else ""
+        ts_note = f" `{ts}`" if ts else ""
+        lines.append(f"## {role}{model_note}{ts_note}\n\n{m['content']}\n")
+
+    md = "\n---\n\n".join(lines)
+    return PlainTextResponse(
+        md,
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f'attachment; filename="buddy-{session_id[:8]}.md"'
+        },
+    )

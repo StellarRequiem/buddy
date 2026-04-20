@@ -33,13 +33,34 @@ from buddy.tools.shell import execute as shell_execute, consume_pending_token
 
 
 # ── Lifespan: startup + graceful shutdown ──────────────────────────────────
+async def _warm_up_model(model: str) -> None:
+    """
+    Send an empty prompt to Ollama to load the model into VRAM at startup.
+    Runs as a background task so it doesn't delay server readiness.
+    Non-fatal — if Ollama isn't up yet the first real request will load it.
+    """
+    import httpx as _httpx
+    try:
+        async with _httpx.AsyncClient(timeout=30) as c:
+            await c.post(
+                f"{settings.ollama_host}/api/generate",
+                json={"model": model, "prompt": "", "keep_alive": "10m"},
+            )
+    except Exception:
+        pass  # silently skip — Ollama may still be starting up
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Startup: run DB migrations, load plugins, start Forest alert poller
+    # Startup: run DB migrations, load plugins, start Forest alert poller,
+    #          warm up the conductor model in the background
     init_db()
     from buddy.tools.plugin_loader import load_plugins
     load_plugins()
     poller_task = asyncio.create_task(start_alert_poller())
+    # Non-blocking warm-up — first request would load the model anyway,
+    # but this shaves ~10s off the first chat response.
+    asyncio.create_task(_warm_up_model(settings.conductor_model))
     yield
     # Shutdown: cancel poller, drain grading thread pool
     poller_task.cancel()

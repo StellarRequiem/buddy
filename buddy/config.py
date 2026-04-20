@@ -49,6 +49,15 @@ class Settings(BaseSettings):
     # ── Anthropic ──────────────────────────────────────────────────────────
     anthropic_api_key: str = ""
 
+    # ── Admin security ─────────────────────────────────────────────────────
+    # When set, /admin/* endpoints require X-Admin-Token: <value> header.
+    # Leave empty for local-only installs (no auth enforced).
+    admin_token: str = ""
+
+    # ── Chat ───────────────────────────────────────────────────────────────
+    # How many previous turns to inject into each prompt.
+    chat_history_limit: int = 20
+
     # ── Test / dev mode ────────────────────────────────────────────────────
     # When True: uses phi4-mini, skips all grading & memory ops.
     # Toggle at runtime: POST /admin/test-mode  {"enabled": true/false}

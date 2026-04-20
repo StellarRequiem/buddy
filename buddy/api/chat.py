@@ -45,6 +45,10 @@ from buddy.memory.vectors import search_memory, upsert_memory
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+# Prevent hammering Ollama: at most 3 concurrent agent runs.
+# Local LLMs are single-threaded anyway — extra concurrency just queues tokens.
+_AGENT_SEMAPHORE = asyncio.Semaphore(3)
+
 
 # ── Request / Response models ──────────────────────────────────────────────────
 
@@ -140,44 +144,42 @@ async def chat(req: ChatRequest):
     grade_out: GradeOut | None = None
 
     try:
-        if use_frontier:
-            result = await opus_chat(messages, session_id=session_id)
-            result.escalated = escalated
-            clean = result.response.strip()
-            grade_out = _grade_out(result, escalated=escalated)
-            model_used = result.model_used
-        elif cfg.use_agent_loop:
-            # ── Apex Predator: native tool-calling loop ────────────────────────
-            full_text, tools_called, shell_gate = await run_agent_collect(
-                messages, model=cfg.conductor_model,
-                max_iterations=cfg.max_agent_iterations,
-            )
-            pending_confirmation = shell_gate
-            clean = full_text.strip()
-            model_used = cfg.conductor_model
-            # Grade post-collect
-            grade_detail = await _local_grade_async(clean, context=req.message, timeout=45.0)
-            if grade_detail:
-                from buddy.llm.router import GradeDetail, RubricScore
-                grade_out = GradeOut(
-                    composite_score=grade_detail.composite_score,
-                    passed=grade_detail.passed,
-                    rubrics=[
-                        RubricScoreOut(name=r.name, score=r.score,
-                                       weight=r.weight, weighted=r.weighted)
-                        for r in grade_detail.rubrics
-                    ],
-                    thinking_trace=grade_detail.thinking_trace,
-                    escalated=False,
+        async with _AGENT_SEMAPHORE:
+            if use_frontier:
+                result = await opus_chat(messages, session_id=session_id)
+                result.escalated = escalated
+                clean = result.response.strip()
+                grade_out = _grade_out(result, escalated=escalated)
+                model_used = result.model_used
+            elif cfg.use_agent_loop:
+                # ── Apex Predator: native tool-calling loop ─────────────────────
+                full_text, tools_called, shell_gate = await run_agent_collect(
+                    messages, model=cfg.conductor_model,
+                    max_iterations=cfg.max_agent_iterations,
                 )
-        else:
-            # Legacy route
-            result = await route(messages, session_id=session_id,
-                                 force_frontier=req.force_frontier)
-            clean = result.response.strip()
-            grade_out = _grade_out(result, escalated=result.escalated)
-            model_used = result.model_used
-
+                pending_confirmation = shell_gate
+                clean = full_text.strip()
+                model_used = cfg.conductor_model
+                grade_detail = await _local_grade_async(clean, context=req.message, timeout=45.0)
+                if grade_detail:
+                    grade_out = GradeOut(
+                        composite_score=grade_detail.composite_score,
+                        passed=grade_detail.passed,
+                        rubrics=[
+                            RubricScoreOut(name=r.name, score=r.score,
+                                           weight=r.weight, weighted=r.weighted)
+                            for r in grade_detail.rubrics
+                        ],
+                        thinking_trace=grade_detail.thinking_trace,
+                        escalated=False,
+                    )
+            else:
+                # Legacy route
+                result = await route(messages, session_id=session_id,
+                                     force_frontier=req.force_frontier)
+                clean = result.response.strip()
+                grade_out = _grade_out(result, escalated=result.escalated)
+                model_used = result.model_used
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
 
@@ -232,6 +234,10 @@ async def chat_stream(req: ChatRequest):
         tools_called = 0
         pending_confirmation: dict | None = None
 
+        # Acquire semaphore for the entire stream duration.
+        # Using explicit acquire/release (not `async with`) because `async with`
+        # spanning yield points in a generator has surprising semantics.
+        await _AGENT_SEMAPHORE.acquire()
         try:
             if use_frontier:
                 # Opus: non-streaming SDK call, single chunk
@@ -239,8 +245,7 @@ async def chat_stream(req: ChatRequest):
                 result.escalated = pre_escalated
                 full_text = result.response
                 model_used = result.model_used
-                g_out = _grade_out(result, escalated=pre_escalated)
-                grade_out = g_out
+                grade_out = _grade_out(result, escalated=pre_escalated)
                 yield f"data: {json.dumps({'token': full_text})}\n\n"
 
             elif cfg.use_agent_loop:
@@ -258,15 +263,11 @@ async def chat_stream(req: ChatRequest):
                         full_text += token
                         yield f"data: {json.dumps({'token': token})}\n\n"
 
-                    elif etype == "tool_call":
-                        yield f"data: {json.dumps(event)}\n\n"
-
-                    elif etype == "tool_result":
+                    elif etype in ("tool_call", "tool_result"):
                         yield f"data: {json.dumps(event)}\n\n"
 
                     elif etype == "shell_gate":
                         pending_confirmation = event["payload"]
-                        # Don't forward yet — included in done payload
 
                     elif etype == "agent_done":
                         tools_called = event.get("tools_called", 0)
@@ -275,7 +276,7 @@ async def chat_stream(req: ChatRequest):
                         yield f"data: {json.dumps({'error': event['message']})}\n\n"
                         return
 
-                # Grade after agent completes
+                # Grade post-stream
                 grade_detail = await _local_grade_async(
                     full_text, context=req.message, timeout=45.0
                 )
@@ -343,6 +344,8 @@ async def chat_stream(req: ChatRequest):
 
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            _AGENT_SEMAPHORE.release()
 
     return StreamingResponse(
         generate(),

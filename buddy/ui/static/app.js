@@ -163,6 +163,59 @@ async function sendMessage(e) {
   }
 }
 
+// ── Agent activity panel ─────────────────────────────────────────────────────
+function _getOrCreateActivityPanel(bubbleWrapper) {
+  let panel = bubbleWrapper.querySelector('.agent-activity');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.className = 'agent-activity';
+    // Insert before the bubble text
+    bubbleWrapper.insertBefore(panel, bubbleWrapper.querySelector('.msg-bubble'));
+  }
+  return panel;
+}
+
+function _addToolCallRow(panel, name, args) {
+  const row = document.createElement('div');
+  row.className = 'agent-tool-row pending';
+  row.dataset.tool = name;
+  const argsPreview = Object.keys(args).length
+    ? Object.entries(args).slice(0, 2).map(([k, v]) => `${k}=${JSON.stringify(v).slice(0,40)}`).join(' ')
+    : '';
+  row.innerHTML =
+    `<span class="agent-tool-icon">⚙</span>` +
+    `<span class="agent-tool-name">${name}</span>` +
+    (argsPreview ? `<span class="agent-tool-args">${_escapeHtml(argsPreview)}</span>` : '') +
+    `<span class="agent-tool-status">…</span>`;
+  panel.appendChild(row);
+  return row;
+}
+
+function _resolveToolRow(panel, name, preview) {
+  // Find the last pending row for this tool name
+  const rows = [...panel.querySelectorAll(`.agent-tool-row.pending[data-tool="${name}"]`)];
+  const row = rows[rows.length - 1];
+  if (!row) return;
+  row.classList.remove('pending');
+  row.classList.add('done');
+  const statusEl = row.querySelector('.agent-tool-status');
+  if (statusEl) statusEl.textContent = preview ? `→ ${_escapeHtml(preview.slice(0, 80))}` : '✓';
+}
+
+function _finalizeActivityPanel(panel, toolsCount) {
+  if (!panel || toolsCount === 0) {
+    if (panel) panel.remove();
+    return;
+  }
+  // Collapse button
+  const header = document.createElement('div');
+  header.className = 'agent-activity-header';
+  header.innerHTML =
+    `<span class="agent-summary">🔧 Used ${toolsCount} tool${toolsCount > 1 ? 's' : ''}</span>` +
+    `<button class="agent-toggle" onclick="this.closest('.agent-activity').classList.toggle('collapsed')">▴</button>`;
+  panel.insertBefore(header, panel.firstChild);
+}
+
 async function _sendStreaming(msg, frontier) {
   const resp = await fetch('/chat/stream', {
     method: 'POST',
@@ -179,7 +232,8 @@ async function _sendStreaming(msg, frontier) {
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let bubble = null;   // the streaming message bubble
+  let bubbleWrapper = null;   // the streaming message wrapper
+  let activityPanel = null;
   let fullText = '';
 
   while (true) {
@@ -188,62 +242,94 @@ async function _sendStreaming(msg, frontier) {
 
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
-    buffer = lines.pop(); // incomplete line stays in buffer
+    buffer = lines.pop();
 
     for (const line of lines) {
       if (!line.startsWith('data: ')) continue;
       let event;
       try { event = JSON.parse(line.slice(6)); } catch { continue; }
 
-      if (event.token !== undefined) {
-        // First token — swap thinking indicator for real bubble
-        if (!bubble) {
+      // ── Tool call start ──────────────────────────────────────────────────────
+      if (event.type === 'tool_call') {
+        if (!bubbleWrapper) {
           hideThinking();
-          bubble = appendMessage('assistant', '', '', null);
-          bubble.querySelector('.msg-bubble').classList.add('streaming');
+          bubbleWrapper = appendMessage('assistant', '', '', null);
+          bubbleWrapper.querySelector('.msg-bubble').classList.add('streaming');
+        }
+        activityPanel = _getOrCreateActivityPanel(bubbleWrapper);
+        _addToolCallRow(activityPanel, event.name, event.args || {});
+        const box = document.getElementById('messages');
+        box.scrollTop = box.scrollHeight;
+        continue;
+      }
+
+      // ── Tool result ──────────────────────────────────────────────────────────
+      if (event.type === 'tool_result') {
+        if (activityPanel) {
+          _resolveToolRow(activityPanel, event.name, event.preview || '');
+        }
+        continue;
+      }
+
+      // ── Shell gate from agent ────────────────────────────────────────────────
+      if (event.type === 'shell_gate') {
+        // will be surfaced via the done payload's pending_confirmation
+        continue;
+      }
+
+      // ── Token ────────────────────────────────────────────────────────────────
+      if (event.token !== undefined) {
+        if (!bubbleWrapper) {
+          hideThinking();
+          bubbleWrapper = appendMessage('assistant', '', '', null);
+          bubbleWrapper.querySelector('.msg-bubble').classList.add('streaming');
         }
         fullText += event.token;
-        bubble.querySelector('.msg-bubble').textContent = fullText;
-        // Auto-scroll
+        bubbleWrapper.querySelector('.msg-bubble').textContent = fullText;
         const box = document.getElementById('messages');
         box.scrollTop = box.scrollHeight;
       }
 
+      // ── Done ─────────────────────────────────────────────────────────────────
       if (event.done) {
-        // Stream complete — finalise bubble
-        if (bubble) {
-          bubble.querySelector('.msg-bubble').classList.remove('streaming');
-          bubble.querySelector('.msg-bubble').textContent = fullText;
+        const toolsCount = event.tools_called || 0;
 
-          // Remove the placeholder meta added when bubble was first created
-          const existingMeta = bubble.querySelector('.msg-meta');
+        if (bubbleWrapper) {
+          bubbleWrapper.querySelector('.msg-bubble').classList.remove('streaming');
+          bubbleWrapper.querySelector('.msg-bubble').textContent = fullText;
+
+          // Finalize activity panel
+          if (activityPanel) {
+            _finalizeActivityPanel(activityPanel, toolsCount);
+          }
+
+          // Remove placeholder meta
+          const existingMeta = bubbleWrapper.querySelector('.msg-meta');
           if (existingMeta) existingMeta.remove();
 
-          // Grade panel takes priority; plain meta if no grade data
           if (event.grade && event.grade.composite_score !== undefined) {
-            bubble.appendChild(_buildGradePanel(event.grade, event.model));
+            bubbleWrapper.appendChild(_buildGradePanel(event.grade, event.model));
           } else {
             const meta = document.createElement('div');
             meta.className = 'msg-meta';
             meta.textContent =
               (event.model ? `via ${event.model}` : '') +
-              (event.escalated ? ' · ↑ escalated' : '');
-            bubble.appendChild(meta);
+              (event.escalated ? ' · ↑ escalated' : '') +
+              (toolsCount ? ` · ${toolsCount} tool${toolsCount > 1 ? 's' : ''}` : '');
+            bubbleWrapper.appendChild(meta);
           }
         } else {
           hideThinking();
-          bubble = appendMessage('assistant', fullText, event.model || '', event.grade || null);
+          bubbleWrapper = appendMessage('assistant', fullText, event.model || '', event.grade || null);
         }
 
         _saveSession(event.session_id);
 
-        // Update model badge
         const badge = document.getElementById('model-badge');
         const isOpus = event.model && event.model.includes('opus');
         badge.textContent = isOpus ? 'opus 4.7' : (event.model || 'local');
         badge.className = isOpus ? 'badge frontier' : 'badge';
 
-        // Shell gate — show confirm banner if LLM emitted a SHELL: directive
         if (event.pending_confirmation) {
           showShellGate(event.pending_confirmation);
         }

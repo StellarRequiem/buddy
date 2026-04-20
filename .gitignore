@@ -1,9 +1,34 @@
+# ── Environment & secrets ──────────────────────────────────────────────────────
 .env
+*.env.local
+
+# ── Python ────────────────────────────────────────────────────────────────────
 .venv/
 __pycache__/
 *.pyc
 *.pyo
-.pytest_cache/
-dist/
+*.pyd
 *.egg-info/
+dist/
+build/
+
+# ── Testing & coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ── Personal / internal ops docs ──────────────────────────────────────────────
+# These are development journals and session notes — not for public consumption.
+HANDOFF.md
+docs/sessions/
+test_live.py
+
+# ── Runtime artifacts ─────────────────────────────────────────────────────────
+# BuddyVault contains all personal data — NEVER commit it.
+# It lives at ~/BuddyVault/ by default, outside the repo.
+BuddyVault/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db

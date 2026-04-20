@@ -191,7 +191,7 @@ function _addToolCallRow(panel, name, args) {
   return row;
 }
 
-function _resolveToolRow(panel, name, preview) {
+function _resolveToolRow(panel, name, preview, full) {
   // Find the last pending row for this tool name
   const rows = [...panel.querySelectorAll(`.agent-tool-row.pending[data-tool="${name}"]`)];
   const row = rows[rows.length - 1];
@@ -199,7 +199,27 @@ function _resolveToolRow(panel, name, preview) {
   row.classList.remove('pending');
   row.classList.add('done');
   const statusEl = row.querySelector('.agent-tool-status');
-  if (statusEl) statusEl.textContent = preview ? `→ ${_escapeHtml(preview.slice(0, 80))}` : '✓';
+  if (statusEl) statusEl.textContent = preview ? `→ ${preview.slice(0, 80)}` : '✓';
+
+  // Store full result and make row clickable to expand
+  if (full && full !== preview) {
+    row.dataset.full = full;
+    row.title = 'Click to expand';
+    row.style.cursor = 'pointer';
+    row.addEventListener('click', () => {
+      const existing = row.nextElementSibling;
+      if (existing && existing.classList.contains('agent-tool-expanded')) {
+        existing.remove();
+        row.classList.remove('expanded');
+      } else {
+        const exp = document.createElement('div');
+        exp.className = 'agent-tool-expanded';
+        exp.textContent = full;
+        row.after(exp);
+        row.classList.add('expanded');
+      }
+    });
+  }
 }
 
 function _finalizeActivityPanel(panel, toolsCount) {
@@ -266,7 +286,7 @@ async function _sendStreaming(msg, frontier) {
       // ── Tool result ──────────────────────────────────────────────────────────
       if (event.type === 'tool_result') {
         if (activityPanel) {
-          _resolveToolRow(activityPanel, event.name, event.preview || '');
+          _resolveToolRow(activityPanel, event.name, event.preview || '', event.full || '');
         }
         continue;
       }

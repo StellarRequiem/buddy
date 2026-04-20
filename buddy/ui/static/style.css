@@ -541,3 +541,19 @@ h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
   color: var(--green); font-size: 11px; flex-shrink: 0;
   max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.agent-tool-row.expanded .agent-tool-status::after {
+  content: " ▾";
+  color: var(--accent);
+}
+.agent-tool-expanded {
+  background: #0a1320;
+  border-top: 1px solid #1e3a5f;
+  padding: 6px 12px 6px 28px;
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}

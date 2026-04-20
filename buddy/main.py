@@ -108,7 +108,65 @@ async def shell_exec(req: ShellExecRequest):
 # ── Health ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok", "vault": str(settings.vault_path)}
+    """
+    Rich health check: DB reachability, Ollama model availability, Forest ping.
+    Returns HTTP 200 always (so uptime monitors don't false-alarm on degraded
+    states). The `status` field is "ok" | "degraded" | "error".
+    """
+    import time as _time
+    import sqlite3 as _sqlite3
+
+    checks: dict = {}
+
+    # ── DB ─────────────────────────────────────────────────────────────────
+    try:
+        with _sqlite3.connect(str(settings.db_path), timeout=2) as conn:
+            conn.execute("SELECT 1")
+        checks["db"] = "ok"
+    except Exception as exc:
+        checks["db"] = f"error: {exc}"
+
+    # ── Ollama + models ─────────────────────────────────────────────────────
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=3) as c:
+            tags = await c.get(f"{settings.ollama_host}/api/tags")
+        installed = {m["name"].split(":")[0] for m in tags.json().get("models", [])}
+        checks["ollama"] = "ok"
+        checks["conductor_model"] = (
+            "ok" if settings.conductor_model.split(":")[0] in installed
+            else f"missing: {settings.conductor_model}"
+        )
+        checks["local_model"] = (
+            "ok" if settings.local_model.split(":")[0] in installed
+            else f"missing: {settings.local_model}"
+        )
+        checks["installed_models"] = sorted(installed)
+    except Exception as exc:
+        checks["ollama"] = f"error: {exc}"
+        checks["conductor_model"] = "unknown"
+        checks["local_model"] = "unknown"
+
+    # ── Forest ─────────────────────────────────────────────────────────────
+    try:
+        async with _httpx.AsyncClient(timeout=2) as c:
+            fr = await c.get(f"{settings.forest_host}/forest/status")
+        checks["forest"] = fr.json().get("status", "ok")
+    except Exception:
+        checks["forest"] = "offline"
+
+    # ── Vault ──────────────────────────────────────────────────────────────
+    checks["vault"] = str(settings.vault_path)
+    checks["vault_exists"] = settings.vault_path.exists()
+
+    # ── Overall status ──────────────────────────────────────────────────────
+    has_error = checks.get("db", "").startswith("error") or \
+                checks.get("ollama", "").startswith("error")
+    has_warn = "missing" in checks.get("conductor_model", "") or \
+               "missing" in checks.get("local_model", "")
+    overall = "error" if has_error else ("degraded" if has_warn else "ok")
+
+    return {"status": overall, "checks": checks, "ts": _time.time()}
 
 
 # ── Entry point ────────────────────────────────────────────────────────────

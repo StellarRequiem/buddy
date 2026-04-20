@@ -15,9 +15,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from buddy.config import settings
 from buddy.memory.db import init_db
@@ -99,15 +100,59 @@ async def lifespan(_app: FastAPI):
     _GRADE_EXECUTOR.shutdown(wait=False)
 
 
+# ── API key middleware ─────────────────────────────────────────────────────
+# Paths that never require auth — the UI, health probe, and OpenAPI schema.
+_NO_AUTH_PREFIXES = ("/", "/health", "/static", "/api/docs", "/api/openapi")
+
+
+class APIKeyMiddleware(BaseHTTPMiddleware):
+    """
+    Optional bearer / X-API-Key auth gate.
+
+    Activated only when API_KEY is set in config / environment.
+    Requests that carry a valid key (or a matching admin token) pass through.
+    """
+    async def dispatch(self, request: Request, call_next):
+        key = settings.api_key.strip()
+        if not key:
+            return await call_next(request)   # auth disabled — local install
+
+        path = request.url.path
+        if path == "/" or any(path.startswith(p) for p in _NO_AUTH_PREFIXES[1:]):
+            return await call_next(request)   # public path
+
+        # Accept key from X-API-Key header or Authorization: Bearer <key>
+        provided = (
+            request.headers.get("X-API-Key", "")
+            or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        )
+        if provided != key:
+            from buddy.memory.store import log_audit
+            try:
+                log_audit("api_auth_fail", f"path={path}",
+                          source_ip=request.client.host if request.client else "")
+            except Exception:
+                pass
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Unauthorized. Provide X-API-Key header."},
+            )
+        return await call_next(request)
+
+
 # ── App ────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Buddy",
-    description="Local-first personal assistant",
-    version="0.1.0",
+    description=(
+        "Local-first agentic AI assistant — 25-tool native function-calling loop, "
+        "Forest security integration, cus-core response grading, and full audit trail."
+    ),
+    version="0.3.0",
     docs_url="/api/docs",
     redoc_url=None,
     lifespan=lifespan,
 )
+app.add_middleware(APIKeyMiddleware)
 
 # Static files and templates
 _STATIC_DIR = Path(__file__).parent / "ui" / "static"
@@ -141,7 +186,7 @@ class ShellExecRequest(BaseModel):
 
 
 @app.post("/shell/execute")
-async def shell_exec(req: ShellExecRequest):
+async def shell_exec(req: ShellExecRequest, request: Request):
     """
     Run a shell command.  Only reachable after the user clicks Approve in the UI.
 
@@ -149,10 +194,18 @@ async def shell_exec(req: ShellExecRequest):
     exact command.  Tokens are single-use: replaying the request is rejected.
     """
     if not consume_pending_token(req.token, req.command):
+        from buddy.memory.store import log_audit
+        log_audit("shell_rejected", f"cmd={req.command[:120]}",
+                  session_id=req.session_id,
+                  source_ip=request.client.host if request.client else "")
         raise HTTPException(
             status_code=403,
             detail="Shell token invalid or expired. Re-submit the message to get a fresh token.",
         )
+    from buddy.memory.store import log_audit
+    log_audit("shell_execute", f"cmd={req.command[:120]}",
+              session_id=req.session_id,
+              source_ip=request.client.host if request.client else "")
     output = shell_execute(req.command)
     return {"command": req.command, "output": output}
 

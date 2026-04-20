@@ -274,6 +274,163 @@ async def _exec_create_task(title: str) -> str:
         return f"[create_task error] {e}"
 
 
+async def _exec_code_search(pattern: str, path: str = "~/BuddyVault",
+                            file_glob: str = "*", max_results: int = 30) -> str:
+    """
+    Regex search across files using ripgrep (falls back to grep -r).
+    Scoped to allowed read paths only.
+    """
+    from buddy.tools.filesystem import _resolve_allowed
+    try:
+        root = _resolve_allowed(path)
+    except ValueError as e:
+        return f"[code_search error] {e}"
+    try:
+        # Prefer ripgrep for speed; fall back to grep
+        import shutil as _shutil
+        rg = _shutil.which("rg")
+        if rg:
+            cmd = [rg, "--heading", "--line-number", "--color=never",
+                   f"--glob={file_glob}", "-m", "5",
+                   "--max-count", "5",
+                   pattern, str(root)]
+        else:
+            cmd = ["grep", "-r", "-n", "--include", file_glob,
+                   "-m", "5", pattern, str(root)]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return "[code_search timeout] Search exceeded 10s."
+        output = stdout.decode("utf-8", errors="replace").strip()
+        if not output:
+            return f"No matches for '{pattern}' in {path}"
+        lines = output.splitlines()
+        if len(lines) > max_results:
+            lines = lines[:max_results]
+            lines.append(f"…[truncated at {max_results} lines]")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"[code_search error] {e}"
+
+
+async def _exec_git_status(repo_path: str = ".") -> str:
+    """Read-only: current git branch, staged/unstaged changes, untracked files."""
+    from buddy.tools.filesystem import _resolve_allowed
+    try:
+        root = _resolve_allowed(repo_path)
+    except ValueError as e:
+        return f"[git_status error] {e}"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", str(root), "status", "--short", "--branch",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        out = stdout.decode("utf-8", errors="replace").strip()
+        err = stderr.decode("utf-8", errors="replace").strip()
+        if proc.returncode != 0:
+            return f"[git_status error] {err or 'non-zero exit'}"
+        return out or "(nothing to report)"
+    except asyncio.TimeoutError:
+        return "[git_status timeout]"
+    except Exception as e:
+        return f"[git_status error] {e}"
+
+
+async def _exec_git_log(repo_path: str = ".", n: int = 10) -> str:
+    """Read-only: last N git commits with hash, author, date, subject."""
+    from buddy.tools.filesystem import _resolve_allowed
+    try:
+        root = _resolve_allowed(repo_path)
+    except ValueError as e:
+        return f"[git_log error] {e}"
+    try:
+        n = min(max(int(n), 1), 50)   # clamp 1-50
+        fmt = "%h  %an  %ar  %s"
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", str(root), "log", f"-{n}", f"--pretty=format:{fmt}",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        out = stdout.decode("utf-8", errors="replace").strip()
+        err = stderr.decode("utf-8", errors="replace").strip()
+        if proc.returncode != 0:
+            return f"[git_log error] {err or 'non-zero exit'}"
+        return out or "(no commits)"
+    except asyncio.TimeoutError:
+        return "[git_log timeout]"
+    except Exception as e:
+        return f"[git_log error] {e}"
+
+
+# ── Notes helpers ──────────────────────────────────────────────────────────────
+# Simple markdown notes stored in ~/BuddyVault/notes/<title>.md
+# Distinct from vector memory (raw text, human-readable, persistent across runs)
+
+def _notes_dir():
+    from pathlib import Path
+    d = cfg.vault_path / "notes"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _safe_note_name(title: str) -> str:
+    """Sanitize title to a safe filename."""
+    import re
+    name = re.sub(r"[^\w\s\-]", "", title).strip().replace(" ", "_")
+    return (name[:60] or "untitled") + ".md"
+
+
+async def _exec_note_write(title: str, content: str, append: bool = False) -> str:
+    notes_dir = _notes_dir()
+    path = notes_dir / _safe_note_name(title)
+    try:
+        if append and path.exists():
+            existing = path.read_text(encoding="utf-8")
+            path.write_text(existing + "\n\n" + content, encoding="utf-8")
+            return f"Appended to note '{title}' ({path.name})"
+        else:
+            path.write_text(f"# {title}\n\n{content}", encoding="utf-8")
+            return f"Note '{title}' saved ({path.name})"
+    except Exception as e:
+        return f"[note_write error] {e}"
+
+
+async def _exec_note_read(title: str) -> str:
+    notes_dir = _notes_dir()
+    path = notes_dir / _safe_note_name(title)
+    if not path.exists():
+        # Fuzzy: try substring match
+        matches = [p for p in notes_dir.glob("*.md") if title.lower() in p.stem.lower()]
+        if matches:
+            path = matches[0]
+        else:
+            return f"[note_read] Note '{title}' not found. Use note_list to see available notes."
+    try:
+        text = path.read_text(encoding="utf-8")
+        return text[:4000] + ("\n…[truncated]" if len(text) > 4000 else "")
+    except Exception as e:
+        return f"[note_read error] {e}"
+
+
+async def _exec_note_list() -> str:
+    notes_dir = _notes_dir()
+    notes = sorted(notes_dir.glob("*.md"))
+    if not notes:
+        return "No notes yet. Use note_write to create one."
+    lines = []
+    for p in notes:
+        size = p.stat().st_size
+        lines.append(f"• {p.stem.replace('_', ' ')}  ({size} bytes)  [{p.name}]")
+    return "\n".join(lines)
+
+
 async def _exec_forest_status() -> str:
     from buddy.api.admin import is_test_mode
     if is_test_mode():
@@ -585,6 +742,121 @@ TOOLS: list[ToolDef] = [
             },
         },
         execute=lambda args: _exec_forest_status(),
+    ),
+
+    # ── New tools ─────────────────────────────────────────────────────────────
+
+    ToolDef(
+        schema={
+            "type": "function",
+            "function": {
+                "name": "code_search",
+                "description": "Search for a regex pattern across files in an allowed directory. Uses ripgrep if available, falls back to grep. Great for finding function definitions, usages, or any text pattern in code.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                        "path": {"type": "string", "description": "Directory to search (default: ~/BuddyVault)", "default": "~/BuddyVault"},
+                        "file_glob": {"type": "string", "description": "File glob filter e.g. '*.py', '*.md' (default: *)", "default": "*"},
+                        "max_results": {"type": "integer", "description": "Max result lines (default: 30)", "default": 30},
+                    },
+                    "required": ["pattern"],
+                },
+            },
+        },
+        execute=lambda args: _exec_code_search(
+            args["pattern"],
+            args.get("path", "~/BuddyVault"),
+            args.get("file_glob", "*"),
+            args.get("max_results", 30),
+        ),
+    ),
+
+    ToolDef(
+        schema={
+            "type": "function",
+            "function": {
+                "name": "git_status",
+                "description": "Show current git branch, staged changes, unstaged changes, and untracked files. Read-only.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo_path": {"type": "string", "description": "Path to git repo (default: current project)", "default": "."},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        execute=lambda args: _exec_git_status(args.get("repo_path", ".")),
+    ),
+
+    ToolDef(
+        schema={
+            "type": "function",
+            "function": {
+                "name": "git_log",
+                "description": "Show the last N git commits (hash, author, date, subject). Read-only.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo_path": {"type": "string", "description": "Path to git repo (default: .)", "default": "."},
+                        "n": {"type": "integer", "description": "Number of commits to show (default: 10, max: 50)", "default": 10},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        execute=lambda args: _exec_git_log(args.get("repo_path", "."), args.get("n", 10)),
+    ),
+
+    ToolDef(
+        schema={
+            "type": "function",
+            "function": {
+                "name": "note_write",
+                "description": "Save or update a markdown note in ~/BuddyVault/notes/. Use for longer-form scratch notes, research summaries, or anything you want to keep readable.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Note title (used as filename)"},
+                        "content": {"type": "string", "description": "Note content (markdown)"},
+                        "append": {"type": "boolean", "description": "Append to existing note instead of overwriting (default false)", "default": False},
+                    },
+                    "required": ["title", "content"],
+                },
+            },
+        },
+        execute=lambda args: _exec_note_write(args["title"], args["content"], args.get("append", False)),
+    ),
+
+    ToolDef(
+        schema={
+            "type": "function",
+            "function": {
+                "name": "note_read",
+                "description": "Read a saved note from ~/BuddyVault/notes/ by title.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Note title (fuzzy matched if not exact)"},
+                    },
+                    "required": ["title"],
+                },
+            },
+        },
+        execute=lambda args: _exec_note_read(args["title"]),
+    ),
+
+    ToolDef(
+        schema={
+            "type": "function",
+            "function": {
+                "name": "note_list",
+                "description": "List all saved notes in ~/BuddyVault/notes/.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        execute=lambda args: _exec_note_list(),
     ),
 ]
 

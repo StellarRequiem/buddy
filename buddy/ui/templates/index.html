@@ -23,6 +23,12 @@
     </nav>
   </header>
 
+  <!-- ── Test mode banner (hidden by default, shown when test mode is active) ── -->
+  <div id="test-mode-banner" class="test-mode-banner hidden">
+    🔬 TEST MODE — qwen2.5:14b unloaded · phi4-mini active · Forest paused
+    <button onclick="disableTestMode()" class="test-mode-off-btn">Disable</button>
+  </div>
+
   <!-- ── Forest status bar (always visible in header area) ─────────────────── -->
   <div id="forest-panel" class="forest-bar">🌲 Forest: checking…</div>
 

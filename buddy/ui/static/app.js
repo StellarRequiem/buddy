@@ -354,6 +354,26 @@ async function refreshForestStatus() {
   }
 }
 
+// ── Test mode banner ─────────────────────────────────────────────────────────
+async function checkTestMode() {
+  try {
+    const resp = await fetch('/admin/status');
+    const d = await resp.json();
+    const banner = document.getElementById('test-mode-banner');
+    if (banner) banner.classList.toggle('hidden', !d.test_mode);
+  } catch (_) {}
+}
+
+async function disableTestMode() {
+  await fetch('/admin/test-mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: false }),
+  });
+  document.getElementById('test-mode-banner')?.classList.add('hidden');
+  refreshForestStatus();
+}
+
 // ── Forest scan scheduler ────────────────────────────────────────────────────
 let _forestInterval = null;
 
@@ -373,6 +393,7 @@ function stopForestScan() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  checkTestMode();
   // No auto-poll on startup — Forest is manual-scan only.
   // Tab click already calls refreshForestStatus() via showTab().
   // Call scheduleForestScan(ms) from the console to automate.

@@ -545,6 +545,42 @@ h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
   content: " ▾";
   color: var(--accent);
 }
+/* ── Tool catalogue panel ─────────────────────────────────── */
+#tools-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.tool-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+.tool-card:hover { border-color: var(--accent); }
+.tool-card.tool-disabled { opacity: 0.45; }
+.tool-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.tool-card-name { font-weight: 600; font-family: monospace; font-size: 12px; color: #79c0ff; }
+.tool-card-desc { font-size: 11px; color: var(--muted); }
+.tool-card-params { font-size: 10px; color: var(--muted); margin-left: auto; }
+.tool-param { background: #1a2636; padding: 1px 5px; border-radius: 3px; font-family: monospace; }
+.tool-param.required { color: var(--accent); }
+.tool-gate-badge {
+  font-size: 10px; background: #2d1f00; color: var(--yellow);
+  padding: 1px 6px; border-radius: 10px;
+}
+.tool-disabled-badge {
+  font-size: 10px; background: #2d0e0e; color: var(--red);
+  padding: 1px 6px; border-radius: 10px;
+}
+
 .agent-tool-expanded {
   background: #0a1320;
   border-top: 1px solid #1e3a5f;

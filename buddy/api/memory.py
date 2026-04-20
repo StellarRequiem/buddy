@@ -43,3 +43,38 @@ async def stats():
         "vector_memory_chunks": memory_count(),
         "facts_count": len(get_facts()),
     }
+
+
+# ── Tools catalogue endpoint ───────────────────────────────────────────────────
+
+@router.get("/tools")
+async def list_tools():
+    """
+    Return the full tool catalogue: name, description, parameter summary,
+    and whether the tool requires human approval (human_gate).
+    """
+    from buddy.tools.tool_registry import TOOLS, _TOOL_MAP
+    from buddy.config import settings as cfg
+
+    result = []
+    for t in TOOLS:
+        fn = t.schema.get("function", {})
+        name = fn.get("name", "")
+        params = fn.get("parameters", {}).get("properties", {})
+        required = fn.get("parameters", {}).get("required", [])
+        result.append({
+            "name": name,
+            "description": fn.get("description", ""),
+            "parameters": [
+                {
+                    "name": k,
+                    "type": v.get("type", ""),
+                    "description": v.get("description", ""),
+                    "required": k in required,
+                }
+                for k, v in params.items()
+            ],
+            "human_gate": t.human_gate,
+            "disabled": name in cfg.disabled_tools,
+        })
+    return {"tools": result, "count": len(result)}

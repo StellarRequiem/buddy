@@ -29,6 +29,7 @@ function showTab(name) {
     loadSessions();
     htmx.trigger('#facts-panel', 'load');
     htmx.trigger('#mem-stats', 'load');
+    loadToolsPanel();
   }
   if (name === 'forest') refreshForestStatus();
   if (name === 'demo') loadDemoScenarios();
@@ -841,6 +842,59 @@ function _renderDemoResult(d) {
     </button>`;
 
   document.getElementById('demo-scenarios').style.display = 'none';
+}
+
+// ── Session export ────────────────────────────────────────────────────────────
+function exportSession() {
+  if (!currentSession) {
+    alert('No active session to export.');
+    return;
+  }
+  const url = `/chat/export/${currentSession}`;
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `buddy-${currentSession.slice(0, 8)}.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+// ── Tools panel ───────────────────────────────────────────────────────────────
+let _toolsLoaded = false;
+
+async function loadToolsPanel() {
+  if (_toolsLoaded) return;
+  const panel = document.getElementById('tools-panel');
+  const countEl = document.getElementById('tools-count');
+  if (!panel) return;
+  try {
+    const resp = await fetch('/memory/tools');
+    const data = await resp.json();
+    const tools = data.tools || [];
+    _toolsLoaded = true;
+    if (countEl) countEl.textContent = `(${tools.length})`;
+
+    panel.innerHTML = tools.map(t => {
+      const gateTag = t.human_gate
+        ? `<span class="tool-gate-badge">⏸ approval</span>` : '';
+      const disabledTag = t.disabled
+        ? `<span class="tool-disabled-badge">disabled</span>` : '';
+      const params = t.parameters.map(p =>
+        `<span class="tool-param${p.required ? ' required' : ''}">${p.name}</span>`
+      ).join(' ');
+      return `
+        <div class="tool-card${t.disabled ? ' tool-disabled' : ''}">
+          <div class="tool-card-header">
+            <span class="tool-card-name">${t.name}</span>
+            ${gateTag}${disabledTag}
+            ${params ? `<span class="tool-card-params">${params}</span>` : ''}
+          </div>
+          <div class="tool-card-desc">${_escapeHtml(t.description)}</div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    if (panel) panel.innerHTML = `<p style="color:var(--muted)">Could not load tools: ${e.message}</p>`;
+  }
 }
 
 async function searchMemory() {

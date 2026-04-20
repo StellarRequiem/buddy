@@ -109,6 +109,7 @@
     <div class="tab-toolbar">
       <input id="mem-search-input" type="text" placeholder="Search memory...">
       <button onclick="searchMemory()">Search</button>
+      <button id="export-btn" onclick="exportSession()" style="margin-left:auto">⬇ Export session</button>
     </div>
     <h3>Sessions</h3>
     <div id="sessions-list" class="session-list">Loading…</div>
@@ -130,6 +131,8 @@
          hx-swap="innerHTML">
       Loading...
     </div>
+    <h3>Available Tools <span id="tools-count" style="font-size:11px;color:var(--muted)"></span></h3>
+    <div id="tools-panel">Loading…</div>
   </section>
 </div>
 

@@ -57,6 +57,12 @@ docker-logs:      ## Tail buddy container logs
 demo:             ## Run the interactive demo script
 	scripts/demo.sh
 
+seed:             ## Seed BuddyVault with realistic demo conversations
+	uv run python scripts/seed_demo.py
+
+seed-reset:       ## Wipe + re-seed demo conversations (clean slate)
+	uv run python scripts/seed_demo.py --reset
+
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 clean:            ## Remove build artifacts, caches, coverage reports
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

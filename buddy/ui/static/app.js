@@ -170,29 +170,46 @@ function _getOrCreateThinkPanel(bubbleWrapper) {
   let panel = bubbleWrapper.querySelector('.think-panel');
   if (!panel) {
     panel = document.createElement('div');
-    panel.className = 'think-panel collapsed';
+    // Open (not collapsed) while streaming so the user sees reasoning in real time
+    panel.className = 'think-panel streaming';
     panel.innerHTML =
       `<div class="think-header" onclick="this.closest('.think-panel').classList.toggle('collapsed')">` +
       `<span class="think-icon">🧠</span>` +
-      `<span class="think-label">Reasoning</span>` +
+      `<span class="think-label">` +
+        `Reasoning<span class="think-dot"> …</span>` +
+        `<span class="think-word-count" style="display:none"></span>` +
+      `</span>` +
       `<span class="think-toggle">▸</span>` +
       `</div>` +
-      `<pre class="think-body"></pre>`;
+      `<div class="think-body-wrap"><pre class="think-body"></pre></div>`;
     // Insert before activity panel and bubble
     bubbleWrapper.insertBefore(panel, bubbleWrapper.firstChild);
   }
   return panel;
 }
 
+function _updateThinkPanel(panel, text) {
+  if (!panel) return;
+  const body = panel.querySelector('.think-body');
+  if (!body) return;
+  body.textContent = text;
+  // Auto-scroll to bottom while streaming
+  const wrap = panel.querySelector('.think-body-wrap');
+  if (wrap) wrap.scrollTop = wrap.scrollHeight;
+}
+
 function _finalizeThinkPanel(panel) {
   if (!panel) return;
-  // Collapse by default once reasoning is complete, update toggle indicator
+  // End streaming state and collapse
+  panel.classList.remove('streaming');
   panel.classList.add('collapsed');
-  const label = panel.querySelector('.think-label');
   const body = panel.querySelector('.think-body');
-  if (label && body) {
-    const lines = body.textContent.split('\n').length;
-    label.textContent = `Reasoning (${lines} lines)`;
+  if (!body) return;
+  const words = body.textContent.trim().split(/\s+/).filter(Boolean).length;
+  const badge = panel.querySelector('.think-word-count');
+  if (badge) {
+    badge.textContent = `${words} words`;
+    badge.style.display = '';
   }
 }
 
@@ -314,7 +331,7 @@ async function _sendStreaming(msg, frontier) {
         if (!thinkPanel) {
           thinkPanel = _getOrCreateThinkPanel(bubbleWrapper);
         }
-        thinkPanel.querySelector('.think-body').textContent = thinkText;
+        _updateThinkPanel(thinkPanel, thinkText);
         const box = document.getElementById('messages');
         box.scrollTop = box.scrollHeight;
         continue;

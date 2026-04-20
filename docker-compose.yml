@@ -1,0 +1,56 @@
+# buddy — Docker Compose
+# Runs buddy + Ollama together. No native install required beyond Docker.
+#
+# Usage:
+#   docker compose up -d
+#   open http://localhost:7437
+#
+# To pull models after first start:
+#   docker compose exec ollama ollama pull qwen2.5:14b
+#   docker compose exec ollama ollama pull phi4-mini
+#   docker compose exec ollama ollama pull nomic-embed-text
+
+services:
+
+  buddy:
+    build: .
+    container_name: buddy
+    ports:
+      - "7437:7437"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LOCAL_MODEL=${LOCAL_MODEL:-qwen2.5:14b}
+      - FALLBACK_LOCAL_MODEL=${FALLBACK_LOCAL_MODEL:-phi4-mini}
+      - OLLAMA_HOST=http://ollama:11434
+      - PORT=7437
+      - DEBUG=false
+    volumes:
+      - buddy-vault:/root/BuddyVault
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7437/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: buddy-ollama
+    ports:
+      - "11435:11434"   # exposed on 11435 to avoid conflict with native Ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  buddy-vault:
+  ollama-models:

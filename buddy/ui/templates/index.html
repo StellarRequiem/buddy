@@ -90,8 +90,14 @@
   <!-- ── Forest tab ───────────────────────────────────────── -->
   <section id="tab-forest" class="tab hidden">
     <div class="tab-toolbar">
-      <span style="color:var(--muted);font-size:.85rem">Forest blue-team swarm · auto-refreshes every 30s</span>
-      <button onclick="refreshForestStatus()">↻ Refresh</button>
+      <span style="color:var(--muted);font-size:.85rem" id="forest-scan-label">Forest blue-team swarm · manual scan</span>
+      <button onclick="refreshForestStatus()">↻ Scan now</button>
+      <select id="forest-interval" onchange="onForestIntervalChange(this.value)" title="Auto-scan interval">
+        <option value="0">Manual only</option>
+        <option value="30000">Every 30s</option>
+        <option value="60000">Every 1m</option>
+        <option value="300000">Every 5m</option>
+      </select>
     </div>
     <div id="forest-detail" class="forest-detail">
       <p style="color:var(--muted)">Loading…</p>

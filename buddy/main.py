@@ -1,5 +1,5 @@
 """
-Buddy — FastAPI application entry point.
+Buddy -- FastAPI application entry point.
 Starts at http://localhost:7437 by default.
 
 Run:
@@ -10,9 +10,10 @@ Run:
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -26,10 +27,19 @@ from buddy.api.siri import router as siri_router
 from buddy.api.forest import router as forest_router
 from buddy.api.demo import router as demo_router
 from buddy.api.admin import router as admin_router
-from buddy.tools.shell import execute as shell_execute, requires_confirmation
+from buddy.tools.shell import execute as shell_execute, consume_pending_token
 
-# ── Init DB on startup ─────────────────────────────────────────────────────
-init_db()
+
+# ── Lifespan: startup + graceful shutdown ──────────────────────────────────
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Startup: run DB migrations, then hand control to the app
+    init_db()
+    yield
+    # Shutdown: drain the grading thread pool so in-flight work finishes cleanly
+    from buddy.llm.router import _GRADE_EXECUTOR
+    _GRADE_EXECUTOR.shutdown(wait=False)
+
 
 # ── App ────────────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -38,6 +48,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/api/docs",
     redoc_url=None,
+    lifespan=lifespan,
 )
 
 # Static files and templates
@@ -67,11 +78,22 @@ async def index():
 class ShellExecRequest(BaseModel):
     command: str
     session_id: str = ""
+    token: str = ""         # one-time CSRF token issued by requires_confirmation()
 
 
 @app.post("/shell/execute")
 async def shell_exec(req: ShellExecRequest):
-    """Runs a shell command. Only reachable after user clicks Approve in the UI."""
+    """
+    Run a shell command.  Only reachable after the user clicks Approve in the UI.
+
+    The *token* must match the one issued by requires_confirmation() for this
+    exact command.  Tokens are single-use: replaying the request is rejected.
+    """
+    if not consume_pending_token(req.token, req.command):
+        raise HTTPException(
+            status_code=403,
+            detail="Shell token invalid or expired. Re-submit the message to get a fresh token.",
+        )
     output = shell_execute(req.command)
     return {"command": req.command, "output": output}
 

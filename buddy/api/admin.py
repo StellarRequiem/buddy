@@ -5,13 +5,26 @@ GET  /admin/status      — current mode + memory info
 from __future__ import annotations
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from buddy.config import settings as cfg
 from buddy.memory.store import upsert_fact, get_facts
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+# ── Auth dependency ────────────────────────────────────────────────────────────
+
+def _verify_admin_token(x_admin_token: str = Header(default="")) -> None:
+    """
+    Require X-Admin-Token header when ADMIN_TOKEN is set in config.
+    If admin_token is empty (default), auth is skipped — safe for local installs.
+    """
+    expected = cfg.admin_token.strip()
+    if expected and x_admin_token != expected:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
 
 # ── Test-mode state ────────────────────────────────────────────────────────────
 # Persisted in SQLite so it survives server restarts.
@@ -62,7 +75,7 @@ class TestModeRequest(BaseModel):
     enabled: bool
 
 
-@router.post("/test-mode")
+@router.post("/test-mode", dependencies=[Depends(_verify_admin_token)])
 async def set_test_mode(req: TestModeRequest):
     global _test_mode
     _test_mode = req.enabled
@@ -89,7 +102,7 @@ async def set_test_mode(req: TestModeRequest):
     return {"test_mode": _test_mode, "message": msg, "freed": freed, "loaded": loaded}
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(_verify_admin_token)])
 async def admin_status():
     # Ask Ollama which models are currently loaded in RAM
     loaded_models = []

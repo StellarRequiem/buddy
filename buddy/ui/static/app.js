@@ -4,6 +4,7 @@
 // Restore session from localStorage so a page refresh doesn't lose chat history.
 let currentSession = localStorage.getItem('buddy_session') || null;
 let pendingShellCommand = null;
+let pendingShellToken = null;    // one-time CSRF token issued by the server
 
 function _saveSession(id) {
   currentSession = id;
@@ -252,6 +253,7 @@ async function _sendStreaming(msg, frontier) {
 // ── Shell gate ──────────────────────────────────────────────────────────────
 function showShellGate(confirmation) {
   pendingShellCommand = confirmation.command;
+  pendingShellToken   = confirmation.token || null;
   document.getElementById('shell-cmd-preview').textContent = confirmation.command;
   document.getElementById('shell-gate').classList.remove('hidden');
 }
@@ -264,22 +266,32 @@ async function approveShell() {
     const resp = await fetch('/shell/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: pendingShellCommand, session_id: currentSession }),
+      body: JSON.stringify({
+        command: pendingShellCommand,
+        session_id: currentSession,
+        token: pendingShellToken || '',
+      }),
     });
     const data = await resp.json();
     hideThinking();
-    appendMessage('assistant', `$ ${pendingShellCommand}\n\n${data.output}`, 'shell');
+    if (!resp.ok) {
+      appendMessage('assistant', `Shell blocked: ${data.detail}`, 'shell');
+    } else {
+      appendMessage('assistant', `$ ${pendingShellCommand}\n\n${data.output}`, 'shell');
+    }
   } catch (err) {
     hideThinking();
     appendMessage('assistant', `Shell error: ${err.message}`, '');
   }
   pendingShellCommand = null;
+  pendingShellToken   = null;
 }
 
 function denyShell() {
   document.getElementById('shell-gate').classList.add('hidden');
   appendMessage('assistant', `[Shell command blocked by user]`, 'shell');
   pendingShellCommand = null;
+  pendingShellToken   = null;
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────────────

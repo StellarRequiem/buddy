@@ -5,7 +5,7 @@ Format: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [Unreleased] — L2 in progress
+## [Unreleased] — L2 robustness pass
 
 ### Added
 - `POST /chat/stream` — SSE streaming endpoint, tokens arrive as they generate
@@ -14,6 +14,21 @@ Format: [Semantic Versioning](https://semver.org/)
 - `docs/ARCHITECTURE.md` — routing flow, memory system, grading details
 - `CONTRIBUTING.md` — setup, rules, branch conventions
 - `CHANGELOG.md` — this file
+- Admin bearer token — `ADMIN_TOKEN` env var; `/admin/*` requires `X-Admin-Token` header when set
+- Shell CSRF token — `requires_confirmation()` issues a single-use token; `/shell/execute` validates it
+- `CHAT_HISTORY_LIMIT` config field — controls turns injected into prompt (default 20)
+- FastAPI lifespan handler — `_GRADE_EXECUTOR.shutdown()` on server stop
+- Lightweight DB migrations — versioned `_MIGRATIONS` list in `db.py`, tracked in `schema_migrations` table
+
+### Fixed
+- Streaming endpoint now runs REMEMBER/READ_FILE/SHELL tool directives post-stream (was silently dropped)
+- Streaming endpoint now grades local responses and returns grade data in SSE done event
+- Streaming endpoint now triggers shell-gate UI banner via done event `pending_confirmation`
+- `_available_models_cache` now expires after 60 s (was never refreshed after initial population)
+- `_test_mode` persisted to SQLite — survives server restarts (was reset to False on every restart)
+- Trivial queries (< 20 chars) skip `search_memory` in both `/chat` and `/chat/stream`
+- `cus-core` dependency changed from `file://` to `git+https://` — Docker builds work for all contributors
+- License corrected to MIT throughout (was Apache-2.0 in pyproject.toml, MIT in README)
 
 ---
 

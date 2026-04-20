@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from buddy.config import settings as cfg
 from buddy.llm.prompts import build_chat_prompt
 from buddy.llm.router import route, local_chat_stream, opus_chat, grade_response_score, RouteResult, _GRADE_EXECUTOR, _should_escalate_on_keywords
 from buddy.memory.store import append_message, get_history, upsert_fact, list_sessions
@@ -104,7 +105,7 @@ def _grade_out(result: RouteResult) -> GradeOut | None:
 async def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
 
-    history = get_history(session_id)
+    history = get_history(session_id, limit=cfg.chat_history_limit)
     loop = asyncio.get_event_loop()
     # Skip vector search for trivial queries — saves ~500ms and avoids noise
     if len(req.message) >= 20:
@@ -194,7 +195,7 @@ async def chat_stream(req: ChatRequest):
     """
     session_id = req.session_id or str(uuid.uuid4())
 
-    history = get_history(session_id)
+    history = get_history(session_id, limit=cfg.chat_history_limit)
     loop = asyncio.get_event_loop()
     # Skip vector search for trivial queries — saves ~500ms
     if len(req.message) >= 20:
@@ -203,9 +204,8 @@ async def chat_stream(req: ChatRequest):
         mem_ctx = []
     messages = build_chat_prompt(history, req.message, mem_ctx)
 
-    from buddy.config import settings as _cfg
     import os as _os
-    api_key = _cfg.anthropic_api_key or _os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = cfg.anthropic_api_key or _os.environ.get("ANTHROPIC_API_KEY", "")
 
     # Routing decision (mirrors router.route() pre-checks)
     use_frontier = (
@@ -233,7 +233,7 @@ async def chat_stream(req: ChatRequest):
 
             else:
                 # Local model: stream tokens as they arrive
-                model_used = _cfg.local_model
+                model_used = cfg.local_model
                 async for token in local_chat_stream(messages):
                     full_text += token
                     yield f"data: {json.dumps({'token': token})}\n\n"

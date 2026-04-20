@@ -193,7 +193,8 @@ async def test_tool_run(req: ToolTestRequest):
     try:
         result = await execute_tool(req.tool_name, req.args)
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        ok = not (result.startswith("[") and "error" in result.lower())
+        # Treat bracket-prefixed sentinel responses as failures
+        ok = not result.startswith("[")
         return {"ok": ok, "result": result, "elapsed_ms": elapsed_ms}
     except Exception as exc:
         elapsed_ms = int((time.monotonic() - t0) * 1000)

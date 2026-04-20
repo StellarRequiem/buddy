@@ -41,8 +41,10 @@ Tasks:
   list_tasks(status)                — list task queue
   create_task(title)                — add a task
 
-Security:
-  forest_status()                   — Forest blue-team swarm incidents
+Security (Forest blue-team swarm):
+  forest_status()                           — swarm health + incident count
+  forest_incidents(severity, limit)         — full incident details (IPs, actions, timeline)
+  forest_scan()                             — trigger fresh scan + threat summary
 """
 
 # ── System prompt — conductor / apex-predator framing ─────────────────────────

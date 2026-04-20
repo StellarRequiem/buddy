@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from buddy.llm.agent import (
     _truncate_result, _preview, _prune_tool_messages,
     _parse_args, _is_shell_gate, _SHELL_GATE_PREFIX, _MAX_TOOL_RESULT,
+    _emit_think_chunk,
 )
 
 
@@ -56,6 +57,57 @@ def test_is_shell_gate_positive():
 
 def test_is_shell_gate_negative():
     assert _is_shell_gate("regular tool output") is False
+
+
+# ── _emit_think_chunk tests ────────────────────────────────────────────────────
+
+def test_emit_think_chunk_plain_text():
+    """Text with no think tags passes through as a token unchanged."""
+    buf, in_think, events = _emit_think_chunk("hello world", False)
+    # May buffer last few chars for lookahead — check the non-buffered portion
+    text_emitted = "".join(t for _, t in events if _ == "token")
+    assert "hello" in text_emitted
+    assert in_think is False
+
+
+def test_emit_think_chunk_complete_think_block():
+    """A fully self-contained <think>…</think> block is split correctly."""
+    buf, in_think, events = _emit_think_chunk("<think>reasoning</think>answer", False)
+    types = [e for e, _ in events]
+    texts = {e: t for e, t in events}
+    assert "thinking_trace" in types
+    assert "reasoning" in texts.get("thinking_trace", "")
+    assert in_think is False
+
+
+def test_emit_think_chunk_pre_think_text():
+    """Text before <think> tag is emitted as a token."""
+    buf, in_think, events = _emit_think_chunk("preamble<think>reason</think>", False)
+    token_texts = [t for e, t in events if e == "token"]
+    assert any("preamble" in t for t in token_texts)
+    assert in_think is False
+
+
+def test_emit_think_chunk_split_across_calls():
+    """Simulates a tag boundary split across two chunks."""
+    # First chunk ends mid-tag
+    buf1, in_think1, events1 = _emit_think_chunk("<thi", False)
+    # Buffered — no events yet, still in NORMAL state
+    # Second chunk completes the tag
+    buf2, in_think2, events2 = _emit_think_chunk(buf1 + "nk>reasoning</think>done", in_think1)
+    all_events = events1 + events2
+    trace_texts = [t for e, t in all_events if e == "thinking_trace"]
+    assert any("reasoning" in t for t in trace_texts)
+
+
+def test_emit_think_chunk_no_think_tags():
+    """Model with no think tags (qwen2.5 style) — just emits tokens."""
+    full = "The answer is 42."
+    buf, in_think, events = _emit_think_chunk(full, False)
+    token_texts = "".join(t for e, t in events if e == "token")
+    # May buffer last few chars — but core content present
+    assert "The answer" in token_texts or len(token_texts) > 0
+    assert in_think is False
 
 
 def test_prune_tool_messages_no_prune_needed():

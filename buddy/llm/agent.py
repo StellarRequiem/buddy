@@ -47,6 +47,57 @@ _MAX_TOOL_MESSAGES = 12
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+# qwen3 wraps its chain-of-thought in <think>…</think> before responding or
+# calling tools.  We split that out at stream time so the UI can render it in a
+# collapsible "Reasoning" block without polluting the assistant's final reply.
+_THINK_OPEN  = "<think>"   # 7 chars
+_THINK_CLOSE = "</think>"  # 9 chars
+
+
+def _emit_think_chunk(
+    buf: str,
+    in_think: bool,
+) -> tuple[str, bool, list[tuple[str, str]]]:
+    """
+    Process one accumulated buffer pass through the think-tag state machine.
+
+    Returns:
+        (remaining_buf, new_in_think, events)
+        events: list of ("token"|"thinking_trace", text)
+    """
+    events: list[tuple[str, str]] = []
+
+    while buf:
+        if not in_think:
+            idx = buf.find(_THINK_OPEN)
+            if idx == -1:
+                # No complete open-tag.  Keep last 6 chars in case the tag
+                # boundary is split across network chunks.
+                safe_end = max(0, len(buf) - 6)
+                if safe_end:
+                    events.append(("token", buf[:safe_end]))
+                return buf[safe_end:], in_think, events
+            # Yield content before the tag
+            if idx:
+                events.append(("token", buf[:idx]))
+            buf = buf[idx + len(_THINK_OPEN):]
+            in_think = True
+        else:
+            idx = buf.find(_THINK_CLOSE)
+            if idx == -1:
+                # No complete close-tag.  Keep last 8 chars.
+                safe_end = max(0, len(buf) - 8)
+                if safe_end:
+                    events.append(("thinking_trace", buf[:safe_end]))
+                return buf[safe_end:], in_think, events
+            if idx:
+                events.append(("thinking_trace", buf[:idx]))
+            buf = buf[idx + len(_THINK_CLOSE):]
+            in_think = False
+
+    return "", in_think, events
+
+
 def _truncate_result(text: str) -> str:
     if len(text) <= _MAX_TOOL_RESULT:
         return text
@@ -252,26 +303,37 @@ async def run_agent_loop(
             break
 
         # ── Ask the model (streaming with tools) ──────────────────────────────
-        # Content tokens stream live as regular "token" events.
-        # qwen3: emits <think> reasoning tokens before tool calls — user sees
-        #        the model think in real time. qwen2.5: typically no content
-        #        before tool_calls, so behaviour is the same as non-streaming.
-        # Tool calls arrive in the final done chunk.
+        # qwen3 emits <think>…</think> reasoning before tool calls or answers.
+        # _emit_think_chunk() splits that into "thinking_trace" events (shown in
+        # a collapsible UI block) vs "token" events (the real response text).
+        # qwen2.5 emits no think tags so the parser is a transparent pass-through.
         tool_calls: list[dict] = []
         streamed_content = False
-        streamed_content_text = ""   # accumulate for assistant message
+        streamed_content_text = ""   # real response text (think stripped)
+        _think_buf = ""              # lookahead buffer for tag boundary splits
+        _in_think  = False           # currently inside <think>…</think>
         try:
             async for evt_type, evt_data in _ollama_stream_with_tools(
                 loop_messages, model=target_model
             ):
                 if evt_type == "thinking":
-                    # Stream content tokens directly — they are either the model's
-                    # reasoning preamble (before tools) or the final answer (no tools).
-                    yield {"type": "token", "token": evt_data}
-                    streamed_content_text += evt_data
-                    streamed_content = True
+                    _think_buf += evt_data
+                    _think_buf, _in_think, events = _emit_think_chunk(_think_buf, _in_think)
+                    for ev_name, ev_text in events:
+                        if ev_text:
+                            yield {"type": ev_name, "token": ev_text}
+                            if ev_name == "token":
+                                streamed_content_text += ev_text
+                                streamed_content = True
                 elif evt_type == "tool_calls":
                     tool_calls = evt_data
+            # Flush any remaining buffer after stream ends
+            if _think_buf:
+                ev_name = "thinking_trace" if _in_think else "token"
+                yield {"type": ev_name, "token": _think_buf}
+                if ev_name == "token":
+                    streamed_content_text += _think_buf
+                    streamed_content = True
         except Exception as exc:
             yield {"type": "error", "message": f"Ollama request failed: {exc}"}
             return
@@ -379,8 +441,10 @@ async def run_agent_collect(
                                       max_iterations=max_iterations,
                                       session_id=session_id):
         etype = event.get("type")
-        if etype in ("token", "thinking"):
+        if etype == "token":
             tokens.append(event["token"])
+        elif etype == "thinking_trace":
+            pass  # reasoning trace — not part of the final collected answer
         elif etype == "agent_done":
             tools_called = event["tools_called"]
         elif etype == "shell_gate":

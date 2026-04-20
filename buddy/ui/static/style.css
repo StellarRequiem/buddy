@@ -355,6 +355,30 @@ h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
 }
 .demo-back-btn:hover { color: var(--text); border-color: var(--text); }
 
+/* ── Test mode banner ─────────────────────────────────────────── */
+.test-mode-banner {
+  background: #2a1f00;
+  border-bottom: 1px solid #7c5a00;
+  padding: 5px 16px;
+  font-size: 12px;
+  color: #f5c842;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  letter-spacing: 0.02em;
+}
+.test-mode-off-btn {
+  margin-left: auto;
+  background: #3d2e00;
+  border: 1px solid #7c5a00;
+  color: #f5c842;
+  padding: 2px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.test-mode-off-btn:hover { background: #5a4400; }
+
 /* ── Forest status ────────────────────────────────────────────── */
 .forest-bar {
   background: #0e1620;

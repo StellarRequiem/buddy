@@ -87,6 +87,16 @@ nav { margin-left: auto; display: flex; gap: 4px; }
 .msg.assistant .msg-bubble { background: var(--surface); border: 1px solid var(--border); }
 
 .msg-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+/* Streaming cursor */
+.msg-bubble.streaming::after {
+  content: '▌';
+  display: inline-block;
+  animation: blink 0.7s step-end infinite;
+  color: var(--accent, #4a9eff);
+  margin-left: 2px;
+}
+@keyframes blink { 50% { opacity: 0; } }
 .msg.user .msg-meta { text-align: right; }
 
 .thinking { color: var(--muted); font-style: italic; font-size: 13px; }

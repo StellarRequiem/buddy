@@ -145,37 +145,94 @@ async function sendMessage(e) {
   showThinking();
 
   try {
-    const resp = await fetch('/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: msg,
-        session_id: currentSession || '',
-        force_frontier: frontier,
-      }),
-    });
-    const data = await resp.json();
-    hideThinking();
-
-    _saveSession(data.session_id);
-    appendMessage('assistant', data.response, data.model_used, data.grade);
-
-    // Update model badge
-    const badge = document.getElementById('model-badge');
-    const isOpus = data.model_used && data.model_used.includes('opus');
-    badge.textContent = isOpus ? 'opus 4.7' : data.model_used;
-    badge.className = isOpus ? 'badge frontier' : 'badge';
-
-    // Shell gate
-    if (data.pending_confirmation) {
-      showShellGate(data.pending_confirmation);
-    }
+    await _sendStreaming(msg, frontier);
   } catch (err) {
     hideThinking();
     appendMessage('assistant', `Error: ${err.message}`, '');
   } finally {
     document.getElementById('send-btn').disabled = false;
     input.focus();
+  }
+}
+
+async function _sendStreaming(msg, frontier) {
+  const resp = await fetch('/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: msg,
+      session_id: currentSession || '',
+      force_frontier: frontier,
+    }),
+  });
+
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let bubble = null;   // the streaming message bubble
+  let fullText = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // incomplete line stays in buffer
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      let event;
+      try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+      if (event.token !== undefined) {
+        // First token — swap thinking indicator for real bubble
+        if (!bubble) {
+          hideThinking();
+          bubble = appendMessage('assistant', '', '', null);
+          bubble.querySelector('.msg-bubble').classList.add('streaming');
+        }
+        fullText += event.token;
+        bubble.querySelector('.msg-bubble').textContent = fullText;
+        // Auto-scroll
+        const box = document.getElementById('messages');
+        box.scrollTop = box.scrollHeight;
+      }
+
+      if (event.done) {
+        // Stream complete — finalise bubble
+        if (bubble) {
+          bubble.querySelector('.msg-bubble').classList.remove('streaming');
+          bubble.querySelector('.msg-bubble').textContent = fullText;
+        } else {
+          hideThinking();
+          bubble = appendMessage('assistant', fullText, '', null);
+        }
+
+        _saveSession(event.session_id);
+
+        // Update model badge
+        const badge = document.getElementById('model-badge');
+        const isOpus = event.model && event.model.includes('opus');
+        badge.textContent = isOpus ? 'opus 4.7' : (event.model || 'local');
+        badge.className = isOpus ? 'badge frontier' : 'badge';
+
+        // Add escalated badge to bubble meta if applicable
+        if (event.escalated && bubble) {
+          const meta = document.createElement('div');
+          meta.className = 'msg-meta';
+          meta.textContent = `via ${event.model} · ↑ escalated`;
+          bubble.appendChild(meta);
+        }
+      }
+
+      if (event.error) {
+        hideThinking();
+        appendMessage('assistant', `Error: ${event.error}`, '');
+      }
+    }
   }
 }
 
@@ -390,6 +447,19 @@ function scheduleForestScan(intervalMs) {
 function stopForestScan() {
   if (_forestInterval) clearInterval(_forestInterval);
   _forestInterval = null;
+}
+
+function onForestIntervalChange(val) {
+  const ms = parseInt(val, 10);
+  const label = document.getElementById('forest-scan-label');
+  if (ms > 0) {
+    scheduleForestScan(ms);
+    refreshForestStatus();
+    if (label) label.textContent = `Forest blue-team swarm · auto-scan every ${ms >= 60000 ? ms/60000+'m' : ms/1000+'s'}`;
+  } else {
+    stopForestScan();
+    if (label) label.textContent = 'Forest blue-team swarm · manual scan';
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

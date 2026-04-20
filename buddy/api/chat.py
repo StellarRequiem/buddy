@@ -1,10 +1,12 @@
 """
 POST /chat        — send a message, get a response
+POST /chat/stream — same but streams tokens via SSE
 GET  /sessions    — list session IDs
 GET  /history/:id — conversation history
 """
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from typing import Any
@@ -12,10 +14,11 @@ from typing import Any
 import asyncio
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from buddy.llm.prompts import build_chat_prompt
-from buddy.llm.router import route, local_chat_stream, grade_response_score, RouteResult, _GRADE_EXECUTOR
+from buddy.llm.router import route, local_chat_stream, opus_chat, grade_response_score, RouteResult, _GRADE_EXECUTOR, _should_escalate_on_keywords
 from buddy.memory.store import append_message, get_history, upsert_fact, list_sessions
 from buddy.memory.vectors import search_memory, upsert_memory
 from buddy.tools.filesystem import read_file
@@ -168,6 +171,83 @@ async def chat(req: ChatRequest):
         pending_confirmation=pending_confirmation,
         model_used=result.model_used,
         grade=_grade_out(result),
+    )
+
+
+@router.post("/stream")
+async def chat_stream(req: ChatRequest):
+    """
+    SSE streaming endpoint — yields tokens as they arrive.
+
+    Event types:
+      data: {"token": "..."}          — incremental token
+      data: {"done": true, "session_id": "...", "model": "...", "escalated": false}
+      data: {"error": "..."}          — on failure
+    """
+    session_id = req.session_id or str(uuid.uuid4())
+
+    history = get_history(session_id)
+    loop = asyncio.get_event_loop()
+    mem_ctx = await loop.run_in_executor(_GRADE_EXECUTOR, search_memory, req.message, 3)
+    messages = build_chat_prompt(history, req.message, mem_ctx)
+
+    from buddy.config import settings as cfg
+    import os
+    api_key = cfg.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+
+    last_user = req.message
+    force_frontier = req.force_frontier
+    escalated = False
+
+    # Determine if we should use frontier (non-streaming path wraps into SSE)
+    use_frontier = (force_frontier and api_key) or (api_key and _should_escalate_on_keywords(last_user))
+    if use_frontier:
+        escalated = not force_frontier  # keyword escalation = escalated, manual = not
+
+    async def generate():
+        full_text = ""
+        model_used = ""
+
+        try:
+            if use_frontier:
+                # Opus doesn't stream via the SDK here — yield full response as single chunk
+                result = await opus_chat(messages, session_id=session_id)
+                result.escalated = escalated
+                full_text = result.response
+                model_used = result.model_used
+                yield f"data: {json.dumps({'token': full_text})}\n\n"
+            else:
+                # Stream local model tokens
+                from buddy.config import settings as _cfg
+                model_used = _cfg.local_model
+                async for token in local_chat_stream(messages):
+                    full_text += token
+                    yield f"data: {json.dumps({'token': token})}\n\n"
+
+            # Clean and persist
+            clean = _clean_response(full_text)
+            append_message(session_id, "user", req.message)
+            append_message(session_id, "assistant", clean, model=model_used)
+
+            # Memory filter
+            _trivial = len(req.message) < 20 or len(clean) < 50
+            if not _trivial:
+                mem_score = await grade_response_score(clean, req.message)
+                if mem_score >= 70.0:
+                    upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")
+
+            yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'model': model_used, 'escalated': escalated})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

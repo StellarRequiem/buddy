@@ -33,6 +33,36 @@ from buddy.tools.shell import execute as shell_execute, consume_pending_token
 
 
 # ── Lifespan: startup + graceful shutdown ──────────────────────────────────
+async def _detect_and_upgrade_conductor() -> None:
+    """
+    If the conductor is still the default qwen2.5:14b AND qwen3:14b is installed,
+    silently upgrade to qwen3 at runtime (no restart required).
+    qwen3 has substantially better multi-step tool reasoning at the same VRAM cost.
+    """
+    import httpx as _httpx
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    try:
+        async with _httpx.AsyncClient(timeout=5) as c:
+            tags = await c.get(f"{settings.ollama_host}/api/tags")
+        installed = {m["name"].split(":")[0] for m in tags.json().get("models", [])}
+    except Exception:
+        return
+
+    default = "qwen2.5"
+    upgrade = "qwen3"
+    current = settings.conductor_model.split(":")[0]
+
+    if current == default and upgrade in installed:
+        # Find the exact tag (prefer qwen3:14b, fall back to first qwen3 tag)
+        all_names = [m["name"] for m in tags.json().get("models", [])]
+        qwen3_tags = [n for n in all_names if n.startswith("qwen3")]
+        target = next((n for n in qwen3_tags if "14b" in n), qwen3_tags[0] if qwen3_tags else None)
+        if target:
+            settings.conductor_model = target
+            _log.info("🚀 Conductor auto-upgraded: %s → %s (better tool reasoning)", default, target)
+
+
 async def _warm_up_model(model: str) -> None:
     """
     Send an empty prompt to Ollama to load the model into VRAM at startup.
@@ -60,6 +90,7 @@ async def lifespan(_app: FastAPI):
     poller_task = asyncio.create_task(start_alert_poller())
     # Non-blocking warm-up — first request would load the model anyway,
     # but this shaves ~10s off the first chat response.
+    asyncio.create_task(_detect_and_upgrade_conductor())
     asyncio.create_task(_warm_up_model(settings.conductor_model))
     yield
     # Shutdown: cancel poller, drain grading thread pool

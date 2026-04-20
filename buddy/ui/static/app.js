@@ -844,6 +844,42 @@ function _renderDemoResult(d) {
   document.getElementById('demo-scenarios').style.display = 'none';
 }
 
+// ── Tool metrics panel ────────────────────────────────────────────────────────
+async function loadToolMetrics() {
+  const panel = document.getElementById('tool-metrics-panel');
+  if (!panel) return;
+  panel.textContent = 'Loading…';
+  try {
+    const resp = await fetch('/admin/tool-metrics');
+    if (!resp.ok) { panel.textContent = 'No data (admin endpoint may require token).'; return; }
+    const data = await resp.json();
+    const agg = data.aggregate || [];
+    if (!agg.length) { panel.textContent = 'No tool calls recorded yet.'; return; }
+
+    panel.innerHTML = `
+      <table class="metrics-table">
+        <thead><tr>
+          <th>Tool</th><th>Calls</th><th>Success</th><th>Avg ms</th><th>Last used</th>
+        </tr></thead>
+        <tbody>
+          ${agg.map(r => {
+            const pct = r.calls ? Math.round((r.successes / r.calls) * 100) : 0;
+            const cls = pct >= 90 ? 'grade-pass' : pct >= 60 ? 'grade-warn' : 'grade-fail';
+            return `<tr>
+              <td class="metrics-name">${r.tool_name}</td>
+              <td>${r.calls}</td>
+              <td><span class="${cls}">${pct}%</span></td>
+              <td>${r.avg_ms ?? '—'}</td>
+              <td style="color:var(--muted);font-size:10px">${(r.last_used||'').slice(0,16)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    panel.textContent = `Error: ${e.message}`;
+  }
+}
+
 // ── Session export ────────────────────────────────────────────────────────────
 function exportSession() {
   if (!currentSession) {

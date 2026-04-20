@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from buddy.config import settings as cfg
-from buddy.memory.store import upsert_fact, get_facts, get_tool_metrics
+from buddy.memory.store import upsert_fact, get_facts, get_tool_metrics, log_audit, get_audit_log
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -82,6 +82,7 @@ async def set_test_mode(req: TestModeRequest):
     # Persist across server restarts
     upsert_fact("_test_mode", "1" if req.enabled else "0", source="system")
 
+    log_audit("admin_action", f"test_mode={'on' if req.enabled else 'off'}")
     freed = []
     loaded = []
 
@@ -164,6 +165,7 @@ async def toggle_tool(tool_name: str, req: ToolToggleRequest):
     else:
         current = [t for t in current if t != tool_name]
     cfg.disabled_tools = current
+    log_audit("tool_toggle", f"tool={tool_name} disabled={req.disabled}")
 
     return {
         "tool_name": tool_name,
@@ -199,6 +201,15 @@ async def test_tool_run(req: ToolTestRequest):
     except Exception as exc:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         return {"ok": False, "result": str(exc), "elapsed_ms": elapsed_ms}
+
+
+@router.get("/audit", dependencies=[Depends(_verify_admin_token)])
+async def audit_log(limit: int = 200, action: str = ""):
+    """
+    Immutable audit trail — auth failures, shell executions, admin mutations.
+    Ordered newest-first.  Filter by action type with ?action=shell_execute etc.
+    """
+    return {"entries": get_audit_log(limit=limit, action=action)}
 
 
 @router.get("/status", dependencies=[Depends(_verify_admin_token)])

@@ -78,9 +78,15 @@ class Settings(BaseSettings):
     # ── Anthropic ──────────────────────────────────────────────────────────
     anthropic_api_key: str = ""
 
-    # ── Admin security ─────────────────────────────────────────────────────
-    # When set, /admin/* endpoints require X-Admin-Token: <value> header.
-    # Leave empty for local-only installs (no auth enforced).
+    # ── Auth ───────────────────────────────────────────────────────────────
+    # Global API key — protects all non-public endpoints when set.
+    # Pass as: X-API-Key: <value>  OR  Authorization: Bearer <value>
+    # Public (no key needed): GET /, /health, /static/*, /api/docs
+    # Leave empty (default) for local-only / trusted-network installs.
+    api_key: str = ""
+
+    # Admin token — additionally protects /admin/* endpoints.
+    # Leave empty to skip admin auth (local installs only).
     admin_token: str = ""
 
     # ── Chat ───────────────────────────────────────────────────────────────

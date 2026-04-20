@@ -95,6 +95,22 @@ _MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_tool_calls_ts   ON tool_calls(ts);
         """,
     ),
+    (
+        3,
+        "audit_log table",
+        """
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts         TEXT    NOT NULL DEFAULT (datetime('now')),
+            action     TEXT    NOT NULL,
+            session_id TEXT    DEFAULT '',
+            detail     TEXT    DEFAULT '',
+            source_ip  TEXT    DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_ts     ON audit_log(ts);
+        CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+        """,
+    ),
 ]
 
 

@@ -121,6 +121,53 @@ def log_tool_call(tool_name: str, success: bool, latency_ms: int,
         )
 
 
+# ── Audit log ─────────────────────────────────────────────────────────────────
+
+def log_audit(
+    action: str,
+    detail: str = "",
+    session_id: str = "",
+    source_ip: str = "",
+) -> None:
+    """
+    Write an immutable audit entry.  Best-effort — never raises.
+
+    Standard actions:
+      chat_message    — user message received
+      shell_execute   — approved shell command ran
+      admin_action    — admin endpoint mutated state
+      tool_toggle     — tool enabled / disabled at runtime
+      api_auth_fail   — invalid or missing API key
+    """
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT INTO audit_log (action, session_id, detail, source_ip) "
+                "VALUES (?,?,?,?)",
+                (action, session_id or "", detail[:500], source_ip or ""),
+            )
+    except Exception:
+        pass  # audit is best-effort, must never crash the caller
+
+
+def get_audit_log(limit: int = 200, action: str = "") -> list[dict]:
+    """Return recent audit entries, optionally filtered by action."""
+    with get_conn() as conn:
+        if action:
+            rows = conn.execute(
+                "SELECT ts, action, session_id, detail, source_ip "
+                "FROM audit_log WHERE action=? ORDER BY id DESC LIMIT ?",
+                (action, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT ts, action, session_id, detail, source_ip "
+                "FROM audit_log ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_tool_metrics(limit: int = 500) -> list[dict]:
     """Return aggregate + recent raw rows for the admin metrics endpoint."""
     with get_conn() as conn:

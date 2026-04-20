@@ -22,7 +22,23 @@ _TIMEOUT = 2.0  # seconds — forest is local, should respond fast
 
 @router.get("/status")
 async def forest_status():
-    """Proxy to Forest Status API. Returns degraded response if forest is offline."""
+    """Proxy to Forest Status API. Returns degraded response if forest is offline or test mode is on."""
+    # Avoid circular import — import lazily
+    from buddy.api.admin import is_test_mode
+    if is_test_mode():
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "paused",
+                "total_logged": 0,
+                "active_incidents": [],
+                "severity_breakdown": {},
+                "chain_length": 0,
+                "improvements_logged": 0,
+                "message": "Forest monitoring paused (test mode active)",
+            },
+        )
+
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(_FOREST_URL)

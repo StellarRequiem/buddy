@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # ── Anthropic ──────────────────────────────────────────────────────────
     anthropic_api_key: str = ""
 
+    # ── Test / dev mode ────────────────────────────────────────────────────
+    # When True: uses phi4-mini, skips all grading & memory ops.
+    # Toggle at runtime: POST /admin/test-mode  {"enabled": true/false}
+    # Or set TEST_MODE=true in .env before starting.
+    test_mode: bool = False
+
     # ── Routing thresholds ─────────────────────────────────────────────────
     # Escalate to frontier when local response confidence is below this
     escalation_confidence_threshold: float = 0.60

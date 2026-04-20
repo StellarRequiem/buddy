@@ -25,6 +25,7 @@ from buddy.api.memory import router as memory_router
 from buddy.api.siri import router as siri_router
 from buddy.api.forest import router as forest_router
 from buddy.api.demo import router as demo_router
+from buddy.api.admin import router as admin_router
 from buddy.tools.shell import execute as shell_execute, requires_confirmation
 
 # ── Init DB on startup ─────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ app.include_router(memory_router)
 app.include_router(siri_router)
 app.include_router(forest_router)
 app.include_router(demo_router)
+app.include_router(admin_router)
 
 
 # ── UI ─────────────────────────────────────────────────────────────────────

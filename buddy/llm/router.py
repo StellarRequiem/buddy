@@ -22,9 +22,11 @@ Credit strategy:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import AsyncGenerator
 
@@ -95,6 +97,9 @@ _LOCAL_GRADER = Grader(
     backends={"ollama": OllamaGrader()} if OllamaGrader else {},
     pass_threshold=65.0,
 )
+
+# Thread pool for synchronous OllamaGrader calls (avoids blocking the event loop)
+_GRADE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cus-grade")
 
 
 # ── Local grading (phi4-mini, free) ───────────────────────────────────────────
@@ -278,6 +283,29 @@ async def _grade_with_thinking(response: str, user_message: str = "",
         return None
 
 
+# ── Model availability check ───────────────────────────────────────────────────
+
+_available_models_cache: set[str] = set()
+
+async def _is_model_available(model: str) -> bool:
+    """Check if a model is installed in Ollama (no auto-pull)."""
+    global _available_models_cache
+    # refresh cache if empty
+    if not _available_models_cache:
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                resp = await c.get(f"{cfg.ollama_host}/api/tags")
+                _available_models_cache = {
+                    m["name"].split(":")[0]   # strip :latest tag
+                    for m in resp.json().get("models", [])
+                }
+        except Exception:
+            return True  # assume available if can't check
+    # match bare name OR name:tag
+    bare = model.split(":")[0]
+    return bare in _available_models_cache or model in _available_models_cache
+
+
 # ── Model call functions ───────────────────────────────────────────────────────
 
 async def opus_chat(messages: list[dict], session_id: str = "") -> RouteResult:
@@ -318,7 +346,7 @@ async def opus_chat(messages: list[dict], session_id: str = "") -> RouteResult:
 
 async def local_chat(messages: list[dict], model: str | None = None) -> str:
     target_model = model or cfg.local_model
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=180) as client:
         resp = await client.post(
             f"{cfg.ollama_host}/api/chat",
             json={
@@ -358,11 +386,30 @@ async def local_chat_stream(messages: list[dict],
                     break
 
 
+# ── Async wrapper for blocking local grade ─────────────────────────────────────
+
+async def _local_grade_async(response: str, context: str = "",
+                              timeout: float = 45.0) -> GradeDetail | None:
+    """
+    Non-blocking async wrapper for _local_grade.
+    Runs in a thread pool so the uvicorn event loop stays responsive.
+    Returns None on timeout or failure.
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(_GRADE_EXECUTOR, _local_grade, response, context),
+            timeout=timeout,
+        )
+    except (asyncio.TimeoutError, Exception):
+        return None
+
+
 # ── Memory filter helper ───────────────────────────────────────────────────────
 
 async def grade_response_score(response: str, context: str = "") -> float:
     """Grade with phi4-mini for memory upsert filtering. Returns 75.0 on failure."""
-    grade = _local_grade(response, context=context)
+    grade = await _local_grade_async(response, context=context)
     return grade.composite_score if grade else 75.0
 
 
@@ -390,16 +437,33 @@ async def route(messages: list[dict], session_id: str = "",
     if force_frontier and api_key:
         return await opus_chat(messages, session_id=session_id)
 
+    # ── Keyword escalation (short-circuit before local call) ──────────────────
+    # Skip local entirely for known-complex requests — saves ~50s on 14b model
+    if api_key and _should_escalate_on_keywords(last_user):
+        result = await opus_chat(messages, session_id=session_id)
+        result.escalated = True
+        return result
+
     # ── Try local first ────────────────────────────────────────────────────────
     local_text: str | None = None
     local_model_used = cfg.local_model
 
+    # Pre-check availability so Ollama doesn't auto-pull missing models
+    primary_available = await _is_model_available(cfg.local_model)
+    fallback_available = await _is_model_available(cfg.fallback_local_model)
+
     try:
-        local_text = await local_chat(messages, model=cfg.local_model)
+        if primary_available:
+            local_text = await local_chat(messages, model=cfg.local_model)
+        else:
+            raise RuntimeError(f"Model {cfg.local_model!r} not installed")
     except Exception:
         try:
-            local_text = await local_chat(messages, model=cfg.fallback_local_model)
-            local_model_used = cfg.fallback_local_model
+            if fallback_available:
+                local_text = await local_chat(messages, model=cfg.fallback_local_model)
+                local_model_used = cfg.fallback_local_model
+            else:
+                raise RuntimeError(f"Model {cfg.fallback_local_model!r} not installed")
         except Exception:
             local_text = None
 
@@ -411,8 +475,9 @@ async def route(messages: list[dict], session_id: str = "",
             return result
         raise RuntimeError("All local models failed and no API key available")
 
-    # ── Grade local response ───────────────────────────────────────────────────
-    local_grade = _local_grade(local_text, context=last_user)
+    # ── Grade local response (async — runs OllamaGrader in thread pool) ──────────
+    # 60s timeout: accounts for phi4-mini load after qwen2.5:14b finishes
+    local_grade = await _local_grade_async(local_text, context=last_user, timeout=60.0)
     local_score = local_grade.composite_score if local_grade else 75.0
 
     # Escalation threshold: config value is 0.0–1.0 scale, score is 0–100

@@ -9,11 +9,13 @@ import re
 import uuid
 from typing import Any
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from buddy.llm.prompts import build_chat_prompt
-from buddy.llm.router import route, local_chat_stream, grade_response_score, RouteResult
+from buddy.llm.router import route, local_chat_stream, grade_response_score, RouteResult, _GRADE_EXECUTOR
 from buddy.memory.store import append_message, get_history, upsert_fact, list_sessions
 from buddy.memory.vectors import search_memory, upsert_memory
 from buddy.tools.filesystem import read_file
@@ -24,6 +26,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 _REMEMBER_RE  = re.compile(r"^REMEMBER:\s*(\S+?)=(.+)$", re.MULTILINE)
 _READ_FILE_RE = re.compile(r"^READ_FILE:\s*(.+)$", re.MULTILINE)
 _SHELL_RE     = re.compile(r"^SHELL:\s*(.+)$", re.MULTILINE)
+_SEARCH_RE    = re.compile(r"^SEARCH:\s*(.+)$", re.MULTILINE)
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
@@ -70,6 +73,7 @@ def _clean_response(text: str) -> str:
     text = _REMEMBER_RE.sub("", text)
     text = _READ_FILE_RE.sub("", text)
     text = _SHELL_RE.sub("", text)
+    text = _SEARCH_RE.sub("", text)
     return text.strip()
 
 
@@ -98,7 +102,9 @@ async def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
 
     history = get_history(session_id)
-    mem_ctx = search_memory(req.message, n_results=3)
+    # Run synchronous search_memory in thread pool to avoid blocking event loop
+    loop = asyncio.get_event_loop()
+    mem_ctx = await loop.run_in_executor(_GRADE_EXECUTOR, search_memory, req.message, 3)
     messages = build_chat_prompt(history, req.message, mem_ctx)
 
     try:

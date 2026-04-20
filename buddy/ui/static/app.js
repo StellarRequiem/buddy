@@ -18,8 +18,15 @@ function showTab(name) {
   document.getElementById('tab-' + name).classList.remove('hidden');
   document.querySelector(`.tab-btn[onclick="showTab('${name}')"]`).classList.add('active');
 
+  // Clear Forest alert dot when landing on Chat tab
+  if (name === 'chat') {
+    const dot = document.querySelector('.tab-btn .alert-dot');
+    if (dot) dot.remove();
+  }
+
   if (name === 'tasks') htmx.trigger('#task-list', 'load');
   if (name === 'memory') {
+    loadSessions();
     htmx.trigger('#facts-panel', 'load');
     htmx.trigger('#mem-stats', 'load');
   }
@@ -489,6 +496,7 @@ function onForestIntervalChange(val) {
 
 document.addEventListener('DOMContentLoaded', () => {
   checkTestMode();
+  connectAlertStream();
   // No auto-poll on startup — Forest is manual-scan only.
   // Tab click already calls refreshForestStatus() via showTab().
   // Call scheduleForestScan(ms) from the console to automate.
@@ -503,6 +511,115 @@ document.addEventListener('DOMContentLoaded', () => {
       .catch(() => {}); // silently ignore if session no longer exists
   }
 });
+
+// ── Forest alert stream ──────────────────────────────────────────────────────
+let _alertSource = null;
+
+function connectAlertStream() {
+  if (_alertSource) _alertSource.close();
+  _alertSource = new EventSource('/alerts/stream');
+
+  _alertSource.onmessage = (e) => {
+    let alert;
+    try { alert = JSON.parse(e.data); } catch { return; }
+    if (alert.type === 'forest_alert') _onForestAlert(alert);
+  };
+
+  // Auto-reconnect is handled by EventSource natively.
+  // Log errors to console only (don't surface to user — Forest may just be offline).
+  _alertSource.onerror = () => {};
+}
+
+function _onForestAlert(alert) {
+  const sevClass = alert.severity === 'ATTACK' ? 'attack' : 'critical';
+  const actions = alert.response_actions?.join(', ') || 'none';
+  const ips     = alert.blocked_ips?.join(', ') || 'none';
+  const ts      = alert.timestamp?.slice(0, 19) || '';
+
+  const summary =
+    `⚠ Forest ${alert.severity}: ${alert.threat_type}\n` +
+    `Phase: ${alert.phase || '—'}  |  Actions: ${actions}  |  Blocked IPs: ${ips}\n` +
+    (ts ? `Detected: ${ts} UTC` : '');
+
+  // Append a red system bubble in chat
+  const box  = document.getElementById('messages');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg forest-alert';
+  const bub = document.createElement('div');
+  bub.className = 'msg-bubble';
+  bub.textContent = summary;
+  const meta = document.createElement('div');
+  meta.className = 'msg-meta';
+  meta.textContent = 'Forest Blue-Team · live alert';
+  wrap.appendChild(bub);
+  wrap.appendChild(meta);
+  box.appendChild(wrap);
+  box.scrollTop = box.scrollHeight;
+
+  // Pulse the Chat tab button if we're not already on it
+  const chatBtn = document.querySelector('.tab-btn[onclick="showTab(\'chat\')"]');
+  if (chatBtn && !chatBtn.classList.contains('active')) {
+    if (!chatBtn.querySelector('.alert-dot')) {
+      const dot = document.createElement('span');
+      dot.className = 'alert-dot';
+      chatBtn.appendChild(dot);
+    }
+  }
+
+  // Update the Forest status bar immediately
+  const bar = document.getElementById('forest-panel');
+  if (bar) {
+    bar.innerHTML = `🌲 Forest: <span class="forest-badge critical">⚠ ALERT — ${alert.severity}</span>`;
+  }
+}
+
+// ── Session dashboard ────────────────────────────────────────────────────────
+async function loadSessions() {
+  const container = document.getElementById('sessions-list');
+  if (!container) return;
+  try {
+    const resp = await fetch('/chat/sessions');
+    const data = await resp.json();
+    const sessions = (data.sessions || []).slice().reverse(); // newest first
+
+    if (!sessions.length) {
+      container.innerHTML = '<p style="color:var(--muted)">No sessions yet.</p>';
+      return;
+    }
+
+    container.innerHTML = sessions.map(id => {
+      const isActive = id === currentSession;
+      return `
+        <div class="session-item${isActive ? ' active-session' : ''}" onclick="loadSession('${id}')">
+          <span class="session-id">${id.slice(0, 12)}…</span>
+          ${isActive ? '<span class="session-meta">current</span>' : ''}
+          <button class="session-load-btn" onclick="event.stopPropagation();loadSession('${id}')">
+            Load →
+          </button>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    if (container) container.innerHTML = `<p style="color:var(--muted)">Could not load sessions: ${e.message}</p>`;
+  }
+}
+
+async function loadSession(sessionId) {
+  const resp = await fetch(`/chat/history/${sessionId}?limit=50`);
+  const data = await resp.json();
+
+  // Clear current chat and render the selected session
+  const box = document.getElementById('messages');
+  box.innerHTML = '';
+  (data.messages || []).forEach(m => appendMessage(m.role, m.content, m.model || ''));
+
+  _saveSession(sessionId);
+
+  // Remove alert dot from Chat tab if present
+  const dot = document.querySelector('.tab-btn .alert-dot');
+  if (dot) dot.remove();
+
+  showTab('chat');
+}
 
 // ── Demo (expected-failure) ─────────────────────────────────────────────────
 let _demoScenarios = [];

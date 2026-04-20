@@ -14,9 +14,10 @@ import httpx
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from buddy.config import settings as cfg
+
 router = APIRouter(prefix="/forest", tags=["forest"])
 
-_FOREST_URL = "http://127.0.0.1:7438/forest/status"
 _TIMEOUT = 2.0  # seconds — forest is local, should respond fast
 
 
@@ -41,7 +42,7 @@ async def forest_status():
 
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(_FOREST_URL)
+            resp = await client.get(f"{cfg.forest_host}/forest/status")
             resp.raise_for_status()
             return JSONResponse(content=resp.json())
     except (httpx.ConnectError, httpx.TimeoutException):

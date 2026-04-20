@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from buddy.memory.store import get_facts
+from buddy.tools.plugin_loader import plugin_system_prompt_section
 
 BUDDY_SYSTEM_PROMPT = """You are Buddy, a local-first personal assistant running on Alexander's Mac Mini M4.
 
@@ -30,6 +31,9 @@ READ_FILE: /path/to/file
 
 When you need a shell command (will trigger human confirmation):
 SHELL: command here
+
+When you want to call a plugin tool:
+PLUGIN: name <args>
 """
 
 
@@ -46,6 +50,9 @@ def build_chat_prompt(history: list[dict], user_message: str,
         )
 
     system = BUDDY_SYSTEM_PROMPT
+    plugin_section = plugin_system_prompt_section()
+    if plugin_section:
+        system += f"\n\n{plugin_section}"
     if facts_str or mem_str:
         system += f"\n\nUSER FACTS:\n{facts_str}{mem_str}"
 

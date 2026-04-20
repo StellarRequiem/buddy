@@ -24,6 +24,7 @@ from buddy.memory.store import append_message, get_history, upsert_fact, list_se
 from buddy.memory.vectors import search_memory, upsert_memory
 from buddy.tools.filesystem import read_file
 from buddy.tools.shell import requires_confirmation
+from buddy.tools.plugin_loader import call_plugin
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -31,6 +32,7 @@ _REMEMBER_RE  = re.compile(r"^REMEMBER:\s*(\S+?)=(.+)$", re.MULTILINE)
 _READ_FILE_RE = re.compile(r"^READ_FILE:\s*(.+)$", re.MULTILINE)
 _SHELL_RE     = re.compile(r"^SHELL:\s*(.+)$", re.MULTILINE)
 _SEARCH_RE    = re.compile(r"^SEARCH:\s*(.+)$", re.MULTILINE)
+_PLUGIN_RE    = re.compile(r"^PLUGIN:\s*(\S+)\s*(.*?)$", re.MULTILINE)
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
@@ -70,7 +72,8 @@ def _extract_tool_calls(response: str) -> dict:
     remember   = {m.group(1): m.group(2).strip() for m in _REMEMBER_RE.finditer(response)}
     read_files = [m.group(1).strip() for m in _READ_FILE_RE.finditer(response)]
     shells     = [m.group(1).strip() for m in _SHELL_RE.finditer(response)]
-    return {"remember": remember, "read_files": read_files, "shells": shells}
+    plugins    = [(m.group(1).strip(), m.group(2).strip()) for m in _PLUGIN_RE.finditer(response)]
+    return {"remember": remember, "read_files": read_files, "shells": shells, "plugins": plugins}
 
 
 def _clean_response(text: str) -> str:
@@ -78,6 +81,7 @@ def _clean_response(text: str) -> str:
     text = _READ_FILE_RE.sub("", text)
     text = _SHELL_RE.sub("", text)
     text = _SEARCH_RE.sub("", text)
+    text = _PLUGIN_RE.sub("", text)
     return text.strip()
 
 
@@ -136,10 +140,15 @@ async def chat(req: ChatRequest):
         except Exception as e:
             tool_context += f"\n\n[FILE ERROR: {path}] {e}"
 
+    # PLUGIN: name args → execute plugin, inject output
+    for plugin_name, plugin_args in directives["plugins"][:3]:
+        result_text = call_plugin(plugin_name, plugin_args)
+        tool_context += f"\n\n[PLUGIN {plugin_name}]\n{result_text}"
+
     if tool_context:
         messages.append({"role": "assistant", "content": raw_response})
         messages.append({"role": "user",
-                         "content": f"File contents:{tool_context}\n\nContinue."})
+                         "content": f"Tool results:{tool_context}\n\nIncorporate these results and continue."})
         try:
             result = await route(messages, session_id=session_id,
                                  force_frontier=req.force_frontier)
@@ -256,11 +265,16 @@ async def chat_stream(req: ChatRequest):
                 except Exception as e:
                     tool_context += f"\n\n[FILE ERROR: {path}] {e}"
 
+            # PLUGIN: name args → execute plugin, inject output
+            for plugin_name, plugin_args in directives["plugins"][:3]:
+                result_text = call_plugin(plugin_name, plugin_args)
+                tool_context += f"\n\n[PLUGIN {plugin_name}]\n{result_text}"
+
             if tool_context:
                 follow_msgs = list(messages)
                 follow_msgs.append({"role": "assistant", "content": full_text})
                 follow_msgs.append({"role": "user",
-                                    "content": f"File contents:{tool_context}\n\nContinue."})
+                                    "content": f"Tool results:{tool_context}\n\nIncorporate these results and continue."})
                 try:
                     if use_frontier:
                         follow = await opus_chat(follow_msgs, session_id=session_id)

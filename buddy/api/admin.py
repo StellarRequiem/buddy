@@ -9,11 +9,23 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from buddy.config import settings as cfg
+from buddy.memory.store import upsert_fact, get_facts
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# Runtime flag — mutated by the toggle endpoint, no restart needed
-_test_mode: bool = False
+# ── Test-mode state ────────────────────────────────────────────────────────────
+# Persisted in SQLite so it survives server restarts.
+# _test_mode is the in-memory cache; SQLite is the source of truth on startup.
+
+def _load_test_mode_from_db() -> bool:
+    """Read persisted test_mode value from the user_facts table."""
+    try:
+        return get_facts().get("_test_mode") == "1"
+    except Exception:
+        return False
+
+
+_test_mode: bool = _load_test_mode_from_db()
 
 
 def is_test_mode() -> bool:
@@ -54,6 +66,8 @@ class TestModeRequest(BaseModel):
 async def set_test_mode(req: TestModeRequest):
     global _test_mode
     _test_mode = req.enabled
+    # Persist across server restarts
+    upsert_fact("_test_mode", "1" if req.enabled else "0", source="system")
 
     freed = []
     loaded = []

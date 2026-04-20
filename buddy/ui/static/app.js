@@ -206,9 +206,25 @@ async function _sendStreaming(msg, frontier) {
         if (bubble) {
           bubble.querySelector('.msg-bubble').classList.remove('streaming');
           bubble.querySelector('.msg-bubble').textContent = fullText;
+
+          // Remove the placeholder meta added when bubble was first created
+          const existingMeta = bubble.querySelector('.msg-meta');
+          if (existingMeta) existingMeta.remove();
+
+          // Grade panel takes priority; plain meta if no grade data
+          if (event.grade && event.grade.composite_score !== undefined) {
+            bubble.appendChild(_buildGradePanel(event.grade, event.model));
+          } else {
+            const meta = document.createElement('div');
+            meta.className = 'msg-meta';
+            meta.textContent =
+              (event.model ? `via ${event.model}` : '') +
+              (event.escalated ? ' · ↑ escalated' : '');
+            bubble.appendChild(meta);
+          }
         } else {
           hideThinking();
-          bubble = appendMessage('assistant', fullText, '', null);
+          bubble = appendMessage('assistant', fullText, event.model || '', event.grade || null);
         }
 
         _saveSession(event.session_id);
@@ -219,12 +235,9 @@ async function _sendStreaming(msg, frontier) {
         badge.textContent = isOpus ? 'opus 4.7' : (event.model || 'local');
         badge.className = isOpus ? 'badge frontier' : 'badge';
 
-        // Add escalated badge to bubble meta if applicable
-        if (event.escalated && bubble) {
-          const meta = document.createElement('div');
-          meta.className = 'msg-meta';
-          meta.textContent = `via ${event.model} · ↑ escalated`;
-          bubble.appendChild(meta);
+        // Shell gate — show confirm banner if LLM emitted a SHELL: directive
+        if (event.pending_confirmation) {
+          showShellGate(event.pending_confirmation);
         }
       }
 

@@ -617,52 +617,99 @@ h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
 }
 
 /* ── qwen3 reasoning trace block ────────────────────────── */
+@keyframes think-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
 .think-panel {
-  background: #0a1520;
-  border: 1px solid #1a3050;
+  background: #080f1a;
+  border: 1px solid #1e3a5c;
+  border-left: 3px solid #2a5f9e;
   border-radius: var(--radius);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   overflow: hidden;
   font-size: 12px;
+  transition: border-color 0.2s;
 }
+/* Active / streaming state */
+.think-panel.streaming {
+  border-left-color: #58a6ff;
+  box-shadow: 0 0 0 1px rgba(88,166,255,0.12), 0 2px 12px rgba(88,166,255,0.06);
+}
+.think-panel.streaming .think-dot {
+  display: inline-block;
+  animation: think-pulse 1s ease-in-out infinite;
+}
+.think-dot { display: none; }  /* hidden by default; shown only while streaming */
+
 .think-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
-  background: #0d1e30;
-  border-bottom: 1px solid #1a3050;
+  padding: 6px 10px;
+  background: #0b1928;
+  border-bottom: 1px solid #1e3a5c;
   cursor: pointer;
   user-select: none;
+  transition: background 0.12s;
 }
-.think-header:hover { background: #132840; }
+.think-header:hover { background: #112338; }
 .think-icon { font-size: 13px; flex-shrink: 0; }
 .think-label {
-  color: #5b8fbf;
+  color: #6699cc;
   font-size: 11px;
   font-weight: 600;
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.think-word-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 10px;
+  padding: 1px 5px;
+  background: #0d1e30;
+  border-radius: 10px;
+  border: 1px solid #1e3a5c;
 }
 .think-toggle {
   color: var(--muted);
   font-size: 11px;
-  transition: transform 0.15s;
+  transition: transform 0.2s ease;
 }
 .think-panel:not(.collapsed) .think-toggle { transform: rotate(90deg); }
+
+/* Smooth collapse/expand via max-height transition */
+.think-body-wrap {
+  max-height: 240px;
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+}
+.think-panel.collapsed .think-body-wrap {
+  max-height: 0;
+}
+.think-panel.collapsed .think-header { border-bottom: none; }
+
 .think-body {
-  padding: 8px 12px;
-  font-family: monospace;
+  padding: 10px 14px;
+  font-family: "SF Mono", "Fira Mono", "Cascadia Code", monospace;
   font-size: 11px;
-  color: #5b8fbf;
+  color: #5588aa;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 200px;
+  max-height: 220px;
   overflow-y: auto;
-  line-height: 1.5;
+  line-height: 1.65;
   margin: 0;
+  scrollbar-width: thin;
+  scrollbar-color: #1e3a5c #080f1a;
 }
-.think-panel.collapsed .think-body { display: none; }
-.think-panel.collapsed .think-header { border-bottom: none; }
+.think-body::-webkit-scrollbar       { width: 4px; }
+.think-body::-webkit-scrollbar-track { background: #080f1a; }
+.think-body::-webkit-scrollbar-thumb { background: #1e3a5c; border-radius: 2px; }
+.think-body::-webkit-scrollbar-thumb:hover { background: #2a5f9e; }
 
 /* ═══════════════════════════════════════════════════════════
    Tools Tab

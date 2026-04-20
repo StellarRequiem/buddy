@@ -280,6 +280,11 @@ async function refreshForestStatus() {
     const resp = await fetch('/forest/status');
     const d = await resp.json();
 
+    if (d.status === 'paused') {
+      if (bar)    bar.innerHTML = '🌲 Forest: <span class="forest-offline">paused</span>';
+      if (detail) detail.innerHTML = `<p style="color:var(--muted)">🔬 Test mode active — monitoring paused.<br>Disable test mode to resume.</p>`;
+      return;
+    }
     if (d.status === 'offline') {
       if (bar)    bar.innerHTML = '🌲 Forest: <span class="forest-offline">offline</span>';
       if (detail) detail.innerHTML = `<p style="color:var(--muted)">Forest swarm not running.<br><code>${d.message || ''}</code></p>`;
@@ -349,10 +354,28 @@ async function refreshForestStatus() {
   }
 }
 
-// Poll forest status every 30s and on load
+// ── Forest scan scheduler ────────────────────────────────────────────────────
+let _forestInterval = null;
+
+function scheduleForestScan(intervalMs) {
+  if (_forestInterval) clearInterval(_forestInterval);
+  if (intervalMs && intervalMs > 0) {
+    _forestInterval = setInterval(refreshForestStatus, intervalMs);
+    return true;
+  }
+  _forestInterval = null;
+  return false;
+}
+
+function stopForestScan() {
+  if (_forestInterval) clearInterval(_forestInterval);
+  _forestInterval = null;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-  refreshForestStatus();
-  setInterval(refreshForestStatus, 30_000);
+  // No auto-poll on startup — Forest is manual-scan only.
+  // Tab click already calls refreshForestStatus() via showTab().
+  // Call scheduleForestScan(ms) from the console to automate.
 
   // If we restored a session, load its history
   if (currentSession) {

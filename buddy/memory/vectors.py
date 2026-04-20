@@ -15,12 +15,13 @@ from buddy.config import settings as cfg
 
 
 def _embed(texts: list[str]) -> list[list[float]]:
-    """Get embeddings from Ollama nomic-embed-text."""
+    """Get embeddings from Ollama nomic-embed-text.
+    Returns None on failure (model not installed, timeout, etc.)."""
     import httpx
     resp = httpx.post(
         f"{cfg.ollama_host}/api/embed",
         json={"model": cfg.embed_model, "input": texts},
-        timeout=30,
+        timeout=10,          # short timeout — degrade gracefully if model missing
     )
     resp.raise_for_status()
     return resp.json()["embeddings"]
@@ -38,26 +39,37 @@ def _collection(name: str = "buddy_memory"):
 
 
 def upsert_memory(text: str, metadata: dict | None = None) -> str:
-    """Store a text chunk. Returns the generated doc_id."""
+    """Store a text chunk. Returns the generated doc_id.
+    Silently skips when embed model unavailable."""
     doc_id = hashlib.sha256(text.encode()).hexdigest()[:16]
-    embedding = _embed([text])[0]
-    _collection().upsert(
-        ids=[doc_id],
-        documents=[text],
-        embeddings=[embedding],
-        metadatas=[metadata or {"source": "buddy"}],
-    )
+    try:
+        embedding = _embed([text])[0]
+        _collection().upsert(
+            ids=[doc_id],
+            documents=[text],
+            embeddings=[embedding],
+            metadatas=[metadata or {"source": "buddy"}],
+        )
+    except Exception:
+        pass   # embed model not ready yet — skip without crashing
     return doc_id
 
 
 def search_memory(query: str, n_results: int = 5) -> list[dict[str, Any]]:
-    """Return top-n semantically similar memory chunks."""
-    embedding = _embed([query])[0]
-    results = _collection().query(
-        query_embeddings=[embedding],
-        n_results=n_results,
-        include=["documents", "metadatas", "distances"],
-    )
+    """Return top-n semantically similar memory chunks.
+    Returns empty list if embed model unavailable (graceful degradation)."""
+    try:
+        embedding = _embed([query])[0]
+    except Exception:
+        return []   # embed model not installed or Ollama unreachable
+    try:
+        results = _collection().query(
+            query_embeddings=[embedding],
+            n_results=n_results,
+            include=["documents", "metadatas", "distances"],
+        )
+    except Exception:
+        return []
     out = []
     for doc, meta, dist in zip(
         results["documents"][0],

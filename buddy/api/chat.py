@@ -105,9 +105,12 @@ async def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
 
     history = get_history(session_id)
-    # Run synchronous search_memory in thread pool to avoid blocking event loop
     loop = asyncio.get_event_loop()
-    mem_ctx = await loop.run_in_executor(_GRADE_EXECUTOR, search_memory, req.message, 3)
+    # Skip vector search for trivial queries — saves ~500ms and avoids noise
+    if len(req.message) >= 20:
+        mem_ctx = await loop.run_in_executor(_GRADE_EXECUTOR, search_memory, req.message, 3)
+    else:
+        mem_ctx = []
     messages = build_chat_prompt(history, req.message, mem_ctx)
 
     try:
@@ -180,63 +183,145 @@ async def chat_stream(req: ChatRequest):
     SSE streaming endpoint — yields tokens as they arrive.
 
     Event types:
-      data: {"token": "..."}          — incremental token
-      data: {"done": true, "session_id": "...", "model": "...", "escalated": false}
-      data: {"error": "..."}          — on failure
+      data: {"token": "..."}
+          Incremental token (or full Opus response as one chunk).
+      data: {"done": true, "session_id": "...", "model": "...",
+             "escalated": false, "grade": {...}|null,
+             "pending_confirmation": {...}|null}
+          Stream complete — grade panel data and shell-gate info included.
+      data: {"error": "..."}
+          Unrecoverable failure.
     """
     session_id = req.session_id or str(uuid.uuid4())
 
     history = get_history(session_id)
     loop = asyncio.get_event_loop()
-    mem_ctx = await loop.run_in_executor(_GRADE_EXECUTOR, search_memory, req.message, 3)
+    # Skip vector search for trivial queries — saves ~500ms
+    if len(req.message) >= 20:
+        mem_ctx = await loop.run_in_executor(_GRADE_EXECUTOR, search_memory, req.message, 3)
+    else:
+        mem_ctx = []
     messages = build_chat_prompt(history, req.message, mem_ctx)
 
-    from buddy.config import settings as cfg
-    import os
-    api_key = cfg.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    from buddy.config import settings as _cfg
+    import os as _os
+    api_key = _cfg.anthropic_api_key or _os.environ.get("ANTHROPIC_API_KEY", "")
 
-    last_user = req.message
-    force_frontier = req.force_frontier
-    escalated = False
-
-    # Determine if we should use frontier (non-streaming path wraps into SSE)
-    use_frontier = (force_frontier and api_key) or (api_key and _should_escalate_on_keywords(last_user))
-    if use_frontier:
-        escalated = not force_frontier  # keyword escalation = escalated, manual = not
+    # Routing decision (mirrors router.route() pre-checks)
+    use_frontier = (
+        (req.force_frontier and api_key)
+        or (api_key and _should_escalate_on_keywords(req.message))
+    )
+    # keyword escalation = escalated flag; manual 🌐 = not escalated
+    pre_escalated: bool = use_frontier and not req.force_frontier
 
     async def generate():
         full_text = ""
         model_used = ""
+        grade = None
+        final_escalated = pre_escalated
 
         try:
             if use_frontier:
-                # Opus doesn't stream via the SDK here — yield full response as single chunk
+                # Opus: non-streaming SDK call, delivered as a single token chunk
                 result = await opus_chat(messages, session_id=session_id)
-                result.escalated = escalated
+                result.escalated = pre_escalated
                 full_text = result.response
                 model_used = result.model_used
+                grade = result.grade
                 yield f"data: {json.dumps({'token': full_text})}\n\n"
+
             else:
-                # Stream local model tokens
-                from buddy.config import settings as _cfg
+                # Local model: stream tokens as they arrive
                 model_used = _cfg.local_model
                 async for token in local_chat_stream(messages):
                     full_text += token
                     yield f"data: {json.dumps({'token': token})}\n\n"
 
-            # Clean and persist
+                # Grade post-stream — tokens already delivered, no client wait
+                grade = await _local_grade_async(full_text, context=req.message, timeout=45.0)
+
+            # ── Tool directives ────────────────────────────────────────────────
+            directives = _extract_tool_calls(full_text)
+
+            # REMEMBER: key=value → persist as user facts
+            for k, v in directives["remember"].items():
+                upsert_fact(k, v, source="assistant_inferred")
+
+            # READ_FILE: fetch file contents, do a follow-up LLM call
+            tool_context = ""
+            for path in directives["read_files"][:2]:
+                try:
+                    tool_context += f"\n\n[FILE: {path}]\n{read_file(path)[:2000]}"
+                except Exception as e:
+                    tool_context += f"\n\n[FILE ERROR: {path}] {e}"
+
+            if tool_context:
+                follow_msgs = list(messages)
+                follow_msgs.append({"role": "assistant", "content": full_text})
+                follow_msgs.append({"role": "user",
+                                    "content": f"File contents:{tool_context}\n\nContinue."})
+                try:
+                    if use_frontier:
+                        follow = await opus_chat(follow_msgs, session_id=session_id)
+                        follow_text = follow.response
+                        yield f"data: {json.dumps({'token': chr(10) + chr(10) + follow_text})}\n\n"
+                    else:
+                        follow_text = ""
+                        async for token in local_chat_stream(follow_msgs):
+                            follow_text += token
+                            yield f"data: {json.dumps({'token': token})}\n\n"
+                    full_text = full_text + "\n\n" + follow_text
+                except Exception:
+                    pass
+
+            # SHELL: queue pending confirmation gate
+            pending_confirmation = None
+            if directives["shells"]:
+                try:
+                    pending_confirmation = requires_confirmation(directives["shells"][0])
+                except Exception:
+                    pass
+
             clean = _clean_response(full_text)
+
+            # ── Persist ────────────────────────────────────────────────────────
             append_message(session_id, "user", req.message)
             append_message(session_id, "assistant", clean, model=model_used)
 
-            # Memory filter
             _trivial = len(req.message) < 20 or len(clean) < 50
             if not _trivial:
-                mem_score = await grade_response_score(clean, req.message)
+                mem_score = (grade.composite_score
+                             if grade else await grade_response_score(clean, req.message))
                 if mem_score >= 70.0:
                     upsert_memory(f"User: {req.message}\nAssistant: {clean[:300]}")
 
-            yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'model': model_used, 'escalated': escalated})}\n\n"
+            # ── Build done payload ─────────────────────────────────────────────
+            grade_payload = None
+            if grade:
+                grade_payload = {
+                    "composite_score": grade.composite_score,
+                    "passed": grade.passed,
+                    "rubrics": [
+                        {"name": r.name, "score": r.score,
+                         "weight": r.weight, "weighted": r.weighted}
+                        for r in grade.rubrics
+                    ],
+                    "thinking_trace": grade.thinking_trace,
+                    "escalated": final_escalated,
+                }
+
+            done_payload: dict = {
+                "done": True,
+                "session_id": session_id,
+                "model": model_used,
+                "escalated": final_escalated,
+                "grade": grade_payload,
+            }
+            if pending_confirmation:
+                done_payload["pending_confirmation"] = pending_confirmation
+
+            yield f"data: {json.dumps(done_payload)}\n\n"
 
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"

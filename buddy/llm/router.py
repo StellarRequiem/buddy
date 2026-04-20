@@ -26,6 +26,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import AsyncGenerator
@@ -286,12 +287,20 @@ async def _grade_with_thinking(response: str, user_message: str = "",
 # ── Model availability check ───────────────────────────────────────────────────
 
 _available_models_cache: set[str] = set()
+_models_cache_ts: float = 0.0
+_MODELS_CACHE_TTL: float = 60.0   # seconds before re-querying /api/tags
+
 
 async def _is_model_available(model: str) -> bool:
-    """Check if a model is installed in Ollama (no auto-pull)."""
-    global _available_models_cache
-    # refresh cache if empty
-    if not _available_models_cache:
+    """Check if a model is installed in Ollama (no auto-pull).
+
+    Cache is refreshed every _MODELS_CACHE_TTL seconds so newly pulled
+    or evicted models are reflected without a server restart.
+    """
+    global _available_models_cache, _models_cache_ts
+    now = time.monotonic()
+    cache_stale = (now - _models_cache_ts) > _MODELS_CACHE_TTL
+    if not _available_models_cache or cache_stale:
         try:
             async with httpx.AsyncClient(timeout=5) as c:
                 resp = await c.get(f"{cfg.ollama_host}/api/tags")
@@ -299,8 +308,9 @@ async def _is_model_available(model: str) -> bool:
                     m["name"].split(":")[0]   # strip :latest tag
                     for m in resp.json().get("models", [])
                 }
+                _models_cache_ts = now
         except Exception:
-            return True  # assume available if can't check
+            return True  # assume available if can't reach Ollama
     # match bare name OR name:tag
     bare = model.split(":")[0]
     return bare in _available_models_cache or model in _available_models_cache

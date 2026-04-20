@@ -3,7 +3,7 @@ name = "buddy"
 version = "0.1.0"
 description = "Local-first interactive desktop assistant — Qwen2.5:14b + Claude Haiku escalation"
 requires-python = ">=3.11"
-license = { text = "Apache-2.0" }
+license = { text = "MIT" }
 authors = [{ name = "StellarRequiem" }]
 
 dependencies = [
@@ -18,7 +18,7 @@ dependencies = [
     "anthropic>=0.40",
     "ollama>=0.4",
     "chromadb>=0.5",
-    "cus-core @ file:///Users/llm01/Projects/cus-core",
+    "cus-core @ git+https://github.com/StellarRequiem/cus-core.git",
     "python-dotenv>=1.2.2",
 ]
 

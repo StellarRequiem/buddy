@@ -545,6 +545,28 @@ h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
   content: " ▾";
   color: var(--accent);
 }
+/* ── Tool metrics table ──────────────────────────────────── */
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 4px;
+}
+.metrics-table th {
+  text-align: left;
+  padding: 4px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 600;
+}
+.metrics-table td {
+  padding: 4px 10px;
+  border-bottom: 1px solid #1e2630;
+}
+.metrics-table tr:hover td { background: #0f1620; }
+.metrics-name { font-family: monospace; color: #79c0ff; }
+
 /* ── Tool catalogue panel ─────────────────────────────────── */
 #tools-panel {
   display: grid;

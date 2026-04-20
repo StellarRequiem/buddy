@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from buddy.config import settings as cfg
-from buddy.memory.store import upsert_fact, get_facts
+from buddy.memory.store import upsert_fact, get_facts, get_tool_metrics
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -100,6 +100,15 @@ async def set_test_mode(req: TestModeRequest):
         msg = f"✅ Test mode OFF — {cfg.local_model} loading back into RAM"
 
     return {"test_mode": _test_mode, "message": msg, "freed": freed, "loaded": loaded}
+
+
+@router.get("/tool-metrics", dependencies=[Depends(_verify_admin_token)])
+async def tool_metrics():
+    """
+    Aggregate and recent tool-call metrics from the tool_calls table.
+    Shows call counts, success rates, and avg latency per tool.
+    """
+    return get_tool_metrics()
 
 
 @router.get("/status", dependencies=[Depends(_verify_admin_token)])

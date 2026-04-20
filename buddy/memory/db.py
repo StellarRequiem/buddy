@@ -77,9 +77,24 @@ _MIGRATIONS: list[tuple[int, str, str]] = [
         """,
     ),
     # ── Add new migrations here -- never edit entries above ────────────────────
-    # Example:
-    # (2, "add source column to grading_log",
-    #  "ALTER TABLE grading_log ADD COLUMN source TEXT;"),
+    (
+        2,
+        "tool_calls metrics table",
+        """
+        CREATE TABLE IF NOT EXISTS tool_calls (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts          TEXT    NOT NULL DEFAULT (datetime('now')),
+            session_id  TEXT,
+            tool_name   TEXT    NOT NULL,
+            success     INTEGER NOT NULL DEFAULT 1,
+            latency_ms  INTEGER,
+            args_summary TEXT,
+            result_preview TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(tool_name);
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_ts   ON tool_calls(ts);
+        """,
+    ),
 ]
 
 

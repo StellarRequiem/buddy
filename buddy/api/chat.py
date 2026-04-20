@@ -156,6 +156,7 @@ async def chat(req: ChatRequest):
                 full_text, tools_called, shell_gate = await run_agent_collect(
                     messages, model=cfg.conductor_model,
                     max_iterations=cfg.max_agent_iterations,
+                    session_id=session_id,
                 )
                 pending_confirmation = shell_gate
                 clean = full_text.strip()
@@ -255,6 +256,7 @@ async def chat_stream(req: ChatRequest):
                     messages,
                     model=cfg.conductor_model,
                     max_iterations=cfg.max_agent_iterations,
+                    session_id=session_id,
                 ):
                     etype = event.get("type")
 

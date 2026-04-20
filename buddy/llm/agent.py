@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -143,15 +144,27 @@ async def _ollama_stream_final(messages: list[dict], model: str) -> AsyncGenerat
 
 # ── Parallel tool executor ─────────────────────────────────────────────────────
 
-async def _execute_tool_call(tc: dict) -> tuple[str, dict, str]:
+async def _execute_tool_call(tc: dict, session_id: str = "") -> tuple[str, dict, str]:
     """Execute a single tool call. Returns (name, args, result_text)."""
+    from buddy.memory.store import log_tool_call
     fn = tc.get("function", {})
     name: str = fn.get("name", "")
     args = _parse_args(fn.get("arguments", {}))
+    t0 = time.monotonic()
+    success = True
     try:
         result = await execute_tool(name, args)
+        success = not result.startswith("[") or not result.endswith("error]")
     except Exception as exc:
         result = f"[Tool error: {exc}]"
+        success = False
+    latency_ms = int((time.monotonic() - t0) * 1000)
+    args_summary = ", ".join(f"{k}={str(v)[:40]}" for k, v in args.items())
+    try:
+        log_tool_call(name, success, latency_ms, session_id=session_id,
+                      args_summary=args_summary, result_preview=_preview(result, 200))
+    except Exception:
+        pass  # metrics are best-effort
     return name, args, result
 
 
@@ -161,6 +174,7 @@ async def run_agent_loop(
     messages: list[dict],
     model: str | None = None,
     max_iterations: int | None = None,
+    session_id: str = "",
 ) -> AsyncGenerator[dict, None]:
     """
     Async generator yielding SSE-ready dicts:
@@ -174,6 +188,7 @@ async def run_agent_loop(
     """
     target_model = model or cfg.conductor_model
     max_iter = max_iterations if max_iterations is not None else cfg.max_agent_iterations
+    deadline = time.monotonic() + cfg.agent_timeout_seconds
 
     loop_messages = list(messages)
     iteration = 0
@@ -181,6 +196,12 @@ async def run_agent_loop(
 
     while iteration < max_iter:
         iteration += 1
+
+        # ── Hard timeout check ─────────────────────────────────────────────────
+        if time.monotonic() > deadline:
+            yield {"type": "token",
+                   "token": f"\n\n[Agent timed out after {cfg.agent_timeout_seconds}s]\n\n"}
+            break
 
         # ── Ask the model ──────────────────────────────────────────────────────
         try:
@@ -219,7 +240,7 @@ async def run_agent_loop(
         # ── Execute ALL tools in parallel ──────────────────────────────────────
         results: list[tuple[str, dict, str]] = list(
             await asyncio.gather(
-                *[_execute_tool_call(tc) for tc in tool_calls],
+                *[_execute_tool_call(tc, session_id=session_id) for tc in tool_calls],
                 return_exceptions=False,
             )
         )
@@ -277,6 +298,7 @@ async def run_agent_collect(
     messages: list[dict],
     model: str | None = None,
     max_iterations: int | None = None,
+    session_id: str = "",
 ) -> tuple[str, int, dict | None]:
     """
     Collect all tokens into a string.
@@ -286,7 +308,9 @@ async def run_agent_collect(
     tools_called = 0
     shell_gate: dict | None = None
 
-    async for event in run_agent_loop(messages, model=model, max_iterations=max_iterations):
+    async for event in run_agent_loop(messages, model=model,
+                                      max_iterations=max_iterations,
+                                      session_id=session_id):
         etype = event.get("type")
         if etype == "token":
             tokens.append(event["token"])

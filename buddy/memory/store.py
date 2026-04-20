@@ -103,3 +103,46 @@ def log_grade(session_id: str, call_type: str, model: str,
             (session_id, call_type, model, composite_score, int(passed),
              json.dumps(detail) if detail else None),
         )
+
+
+# ── Tool call metrics ──────────────────────────────────────────────────────────
+
+def log_tool_call(tool_name: str, success: bool, latency_ms: int,
+                  session_id: str = "", args_summary: str = "",
+                  result_preview: str = "") -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO tool_calls "
+            "(session_id, tool_name, success, latency_ms, args_summary, result_preview) "
+            "VALUES (?,?,?,?,?,?)",
+            (session_id, tool_name, int(success), latency_ms,
+             args_summary[:200], result_preview[:300]),
+        )
+
+
+def get_tool_metrics(limit: int = 500) -> list[dict]:
+    """Return aggregate + recent raw rows for the admin metrics endpoint."""
+    with get_conn() as conn:
+        agg = conn.execute(
+            """
+            SELECT tool_name,
+                   COUNT(*)                             AS calls,
+                   SUM(success)                         AS successes,
+                   ROUND(AVG(latency_ms))               AS avg_ms,
+                   ROUND(MIN(latency_ms))               AS min_ms,
+                   ROUND(MAX(latency_ms))               AS max_ms,
+                   MAX(ts)                              AS last_used
+            FROM tool_calls
+            GROUP BY tool_name
+            ORDER BY calls DESC
+            """
+        ).fetchall()
+        recent = conn.execute(
+            "SELECT ts, tool_name, success, latency_ms, args_summary, result_preview "
+            "FROM tool_calls ORDER BY id DESC LIMIT ?",
+            (min(limit, 200),),
+        ).fetchall()
+    return {
+        "aggregate": [dict(r) for r in agg],
+        "recent": [dict(r) for r in recent],
+    }

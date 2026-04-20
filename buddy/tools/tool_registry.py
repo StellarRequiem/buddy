@@ -872,8 +872,10 @@ def get_tool(name: str) -> ToolDef | None:
 
 async def execute_tool(name: str, args: dict) -> str:
     """Dispatch a tool call by name. Returns result string."""
+    if name in cfg.disabled_tools:
+        return f"[Tool '{name}' is disabled by configuration (DISABLED_TOOLS).]"
     tool = _TOOL_MAP.get(name)
     if not tool:
-        available = ", ".join(_TOOL_MAP.keys())
+        available = ", ".join(k for k in _TOOL_MAP.keys() if k not in cfg.disabled_tools)
         return f"[Unknown tool '{name}'. Available: {available}]"
     return await tool.execute(args)

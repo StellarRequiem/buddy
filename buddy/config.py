@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # ── Ollama ─────────────────────────────────────────────────────────────
     ollama_host: str = "http://127.0.0.1:11434"
 
+    # ── Forest ─────────────────────────────────────────────────────────────
+    forest_host: str = "http://127.0.0.1:7438"
+    # Seconds between Forest status polls for the alert system
+    forest_alert_interval: int = 30
+    # Only these severities trigger a chat alert (case-insensitive)
+    forest_alert_severities: list[str] = ["CRITICAL", "ATTACK"]
+
     # ── Anthropic ──────────────────────────────────────────────────────────
     anthropic_api_key: str = ""
 

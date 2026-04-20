@@ -443,3 +443,52 @@ h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
 .inc-type  { font-weight: 500; }
 .inc-phase { color: var(--muted); font-size: 12px; margin-left: 6px; }
 .inc-meta  { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+/* ── Forest alert chat bubble ─────────────────────────────────── */
+.msg.forest-alert { align-self: stretch; max-width: 100%; }
+.msg.forest-alert .msg-bubble {
+  background: #1a0a0a;
+  border: 1px solid var(--red);
+  color: #ffaaaa;
+  font-size: 13px;
+}
+.msg.forest-alert .msg-meta { color: var(--red); }
+
+/* Alert badge on Chat tab button */
+.tab-btn .alert-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  background: var(--red);
+  border-radius: 50%;
+  margin-left: 5px;
+  vertical-align: middle;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.7); }
+}
+
+/* ── Session list (Memory tab) ────────────────────────────────── */
+.session-list { display: flex; flex-direction: column; gap: 6px; }
+.session-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.session-item:hover { border-color: var(--accent); }
+.session-item.active-session { border-color: var(--accent); background: #0e1e2f; }
+.session-id   { font-family: monospace; font-size: 12px; color: var(--muted); flex: 1; }
+.session-meta { font-size: 11px; color: var(--muted); }
+.session-load-btn {
+  background: none; border: 1px solid var(--border);
+  color: var(--accent); padding: 2px 10px;
+  border-radius: var(--radius); cursor: pointer; font-size: 11px;
+}
+.session-load-btn:hover { border-color: var(--accent); background: #0e1e2f; }

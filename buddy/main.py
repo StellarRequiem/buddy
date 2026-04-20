@@ -10,6 +10,7 @@ Run:
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,16 +28,21 @@ from buddy.api.siri import router as siri_router
 from buddy.api.forest import router as forest_router
 from buddy.api.demo import router as demo_router
 from buddy.api.admin import router as admin_router
+from buddy.api.alerts import router as alerts_router, start_alert_poller
 from buddy.tools.shell import execute as shell_execute, consume_pending_token
 
 
 # ── Lifespan: startup + graceful shutdown ──────────────────────────────────
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Startup: run DB migrations, then hand control to the app
+    # Startup: run DB migrations, load plugins, start Forest alert poller
     init_db()
+    from buddy.tools.plugin_loader import load_plugins
+    load_plugins()
+    poller_task = asyncio.create_task(start_alert_poller())
     yield
-    # Shutdown: drain the grading thread pool so in-flight work finishes cleanly
+    # Shutdown: cancel poller, drain grading thread pool
+    poller_task.cancel()
     from buddy.llm.router import _GRADE_EXECUTOR
     _GRADE_EXECUTOR.shutdown(wait=False)
 
@@ -66,6 +72,7 @@ app.include_router(siri_router)
 app.include_router(forest_router)
 app.include_router(demo_router)
 app.include_router(admin_router)
+app.include_router(alerts_router)
 
 
 # ── UI ─────────────────────────────────────────────────────────────────────

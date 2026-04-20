@@ -29,8 +29,8 @@ function showTab(name) {
     loadSessions();
     htmx.trigger('#facts-panel', 'load');
     htmx.trigger('#mem-stats', 'load');
-    loadToolsPanel();
   }
+  if (name === 'tools') loadToolsTab();
   if (name === 'forest') refreshForestStatus();
   if (name === 'demo') loadDemoScenarios();
 }
@@ -895,43 +895,204 @@ function exportSession() {
   document.body.removeChild(a);
 }
 
-// ── Tools panel ───────────────────────────────────────────────────────────────
-let _toolsLoaded = false;
+// ── Tools tab ─────────────────────────────────────────────────────────────────
+let _toolsData = [];   // full tool list from server
+let _toolsTabLoaded = false;
 
-async function loadToolsPanel() {
-  if (_toolsLoaded) return;
-  const panel = document.getElementById('tools-panel');
-  const countEl = document.getElementById('tools-count');
-  if (!panel) return;
+async function loadToolsTab(force = false) {
+  if (_toolsTabLoaded && !force) return;
+  const grid = document.getElementById('tools-tab-grid');
+  if (!grid) return;
+  grid.textContent = 'Loading…';
   try {
     const resp = await fetch('/memory/tools');
     const data = await resp.json();
-    const tools = data.tools || [];
-    _toolsLoaded = true;
-    if (countEl) countEl.textContent = `(${tools.length})`;
-
-    panel.innerHTML = tools.map(t => {
-      const gateTag = t.human_gate
-        ? `<span class="tool-gate-badge">⏸ approval</span>` : '';
-      const disabledTag = t.disabled
-        ? `<span class="tool-disabled-badge">disabled</span>` : '';
-      const params = t.parameters.map(p =>
-        `<span class="tool-param${p.required ? ' required' : ''}">${p.name}</span>`
-      ).join(' ');
-      return `
-        <div class="tool-card${t.disabled ? ' tool-disabled' : ''}">
-          <div class="tool-card-header">
-            <span class="tool-card-name">${t.name}</span>
-            ${gateTag}${disabledTag}
-            ${params ? `<span class="tool-card-params">${params}</span>` : ''}
-          </div>
-          <div class="tool-card-desc">${_escapeHtml(t.description)}</div>
-        </div>`;
-    }).join('');
+    _toolsData = data.tools || [];
+    _toolsTabLoaded = true;
+    _renderToolsGrid(_toolsData);
+    _populateToolTestSelect(_toolsData);
+    loadToolMetrics();   // auto-load metrics whenever catalogue loads
   } catch (e) {
-    if (panel) panel.innerHTML = `<p style="color:var(--muted)">Could not load tools: ${e.message}</p>`;
+    grid.innerHTML = `<p style="color:var(--muted)">Could not load tools: ${e.message}</p>`;
   }
 }
+
+function _renderToolsGrid(tools) {
+  const grid = document.getElementById('tools-tab-grid');
+  const countEl = document.getElementById('tools-tab-count');
+  if (!grid) return;
+
+  const showDisabled = document.getElementById('tools-show-disabled')?.checked ?? true;
+  const filterVal = (document.getElementById('tools-filter')?.value || '').toLowerCase();
+
+  const visible = tools.filter(t => {
+    if (!showDisabled && t.disabled) return false;
+    if (filterVal && !t.name.toLowerCase().includes(filterVal) &&
+        !t.description.toLowerCase().includes(filterVal)) return false;
+    return true;
+  });
+
+  if (countEl) countEl.textContent = `${visible.length} / ${tools.length}`;
+
+  if (!visible.length) {
+    grid.innerHTML = `<p style="color:var(--muted)">No tools match the filter.</p>`;
+    return;
+  }
+
+  grid.innerHTML = visible.map(t => {
+    const gateTag = t.human_gate
+      ? `<span class="tool-gate-badge">⏸ approval</span>` : '';
+    const params = t.parameters.map(p =>
+      `<span class="tool-param${p.required ? ' required' : ''}" title="${p.description || ''}">${p.name}</span>`
+    ).join(' ');
+    const disabledChecked = t.disabled ? 'checked' : '';
+    return `
+      <div class="tool-card${t.disabled ? ' tool-disabled' : ''}" id="tc-${t.name}">
+        <div class="tool-card-header">
+          <span class="tool-card-name">${t.name}</span>
+          ${gateTag}
+          ${params ? `<span class="tool-card-params">${params}</span>` : ''}
+          <label class="tool-toggle-label" title="${t.disabled ? 'Enable tool' : 'Disable tool'}">
+            <input type="checkbox" class="tool-toggle-cb" ${disabledChecked}
+              onchange="toggleTool('${t.name}', this.checked)"
+              onclick="event.stopPropagation()">
+            <span class="tool-toggle-track"></span>
+          </label>
+        </div>
+        <div class="tool-card-desc">${_escapeHtml(t.description)}</div>
+        <button class="tool-test-btn" onclick="quickTestTool('${t.name}')">Test ▶</button>
+      </div>`;
+  }).join('');
+}
+
+function filterTools(val) {
+  if (_toolsData.length) _renderToolsGrid(_toolsData);
+}
+
+async function toggleTool(name, disabledChecked) {
+  try {
+    const resp = await fetch(`/admin/tools/${encodeURIComponent(name)}/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabled: disabledChecked }),
+    });
+    const data = await resp.json();
+    // Update local cache
+    const t = _toolsData.find(x => x.name === name);
+    if (t) t.disabled = data.disabled;
+    // Refresh the card
+    const card = document.getElementById(`tc-${name}`);
+    if (card) card.classList.toggle('tool-disabled', data.disabled);
+  } catch (e) {
+    alert(`Toggle failed: ${e.message}`);
+    // Revert checkbox
+    await loadToolsTab(true);
+  }
+}
+
+// ── Tool test runner ─────────────────────────────────────────────────────────
+
+function _populateToolTestSelect(tools) {
+  const sel = document.getElementById('tool-test-select');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— select a tool —</option>' +
+    tools.map(t => `<option value="${t.name}"${t.disabled ? ' disabled' : ''}>${t.name}</option>`).join('');
+}
+
+function onToolTestSelect(name) {
+  const paramsDiv = document.getElementById('tool-test-params');
+  const actionsDiv = document.getElementById('tool-test-actions');
+  const outputEl = document.getElementById('tool-test-output');
+  if (!paramsDiv) return;
+  if (outputEl) { outputEl.textContent = ''; outputEl.classList.add('hidden'); }
+  const elapsed = document.getElementById('tool-test-elapsed');
+  if (elapsed) elapsed.textContent = '';
+
+  if (!name) {
+    paramsDiv.innerHTML = '';
+    actionsDiv?.classList.add('hidden');
+    return;
+  }
+  const tool = _toolsData.find(t => t.name === name);
+  if (!tool) return;
+
+  // Build a simple form for each parameter
+  if (tool.parameters.length === 0) {
+    paramsDiv.innerHTML = `<span class="tool-test-no-params">No parameters required.</span>`;
+  } else {
+    paramsDiv.innerHTML = tool.parameters.map(p => `
+      <div class="tool-test-param-row">
+        <label class="tool-test-param-label">
+          ${p.name}${p.required ? '<span class="required-star">*</span>' : ''}
+          <span class="tool-test-param-type">${p.type || 'any'}</span>
+        </label>
+        <input id="ttp-${p.name}" class="tool-test-param-input" type="text"
+          placeholder="${_escapeHtml(p.description || p.name)}"
+          data-param="${p.name}" data-type="${p.type || 'string'}">
+      </div>`).join('');
+  }
+  actionsDiv?.classList.remove('hidden');
+}
+
+async function runToolTest() {
+  const name = document.getElementById('tool-test-select')?.value;
+  if (!name) return;
+
+  const tool = _toolsData.find(t => t.name === name);
+  const args = {};
+  if (tool) {
+    for (const p of tool.parameters) {
+      const el = document.getElementById(`ttp-${p.name}`);
+      if (el && el.value !== '') {
+        const val = el.value;
+        // Coerce to number if type says so
+        if (p.type === 'integer' || p.type === 'number') {
+          args[p.name] = Number(val);
+        } else if (p.type === 'boolean') {
+          args[p.name] = val === 'true' || val === '1';
+        } else {
+          args[p.name] = val;
+        }
+      }
+    }
+  }
+
+  const outputEl = document.getElementById('tool-test-output');
+  const elapsed = document.getElementById('tool-test-elapsed');
+  if (outputEl) { outputEl.textContent = 'Running…'; outputEl.classList.remove('hidden'); }
+  if (elapsed) elapsed.textContent = '';
+
+  try {
+    const resp = await fetch('/admin/tools/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool_name: name, args }),
+    });
+    const data = await resp.json();
+    if (outputEl) {
+      outputEl.textContent = data.result || '(empty result)';
+      outputEl.className = `tool-test-output ${data.ok ? 'test-ok' : 'test-fail'}`;
+    }
+    if (elapsed) elapsed.textContent = `${data.elapsed_ms}ms`;
+  } catch (e) {
+    if (outputEl) {
+      outputEl.textContent = `Error: ${e.message}`;
+      outputEl.className = 'tool-test-output test-fail';
+    }
+  }
+}
+
+// Quick-test button on a card (no-arg tools only)
+function quickTestTool(name) {
+  const sel = document.getElementById('tool-test-select');
+  if (sel) { sel.value = name; onToolTestSelect(name); }
+  // Scroll to test runner
+  document.querySelector('.tool-test-panel')?.scrollIntoView({ behavior: 'smooth' });
+  runToolTest();
+}
+
+// Legacy shim — Memory tab no longer has tools panel, but keep function name safe
+function loadToolsPanel() {}
 
 async function searchMemory() {
   const q = document.getElementById('mem-search-input').value.trim();

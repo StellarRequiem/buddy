@@ -259,6 +259,7 @@ async def run_agent_loop(
         # Tool calls arrive in the final done chunk.
         tool_calls: list[dict] = []
         streamed_content = False
+        streamed_content_text = ""   # accumulate for assistant message
         try:
             async for evt_type, evt_data in _ollama_stream_with_tools(
                 loop_messages, model=target_model
@@ -267,6 +268,7 @@ async def run_agent_loop(
                     # Stream content tokens directly — they are either the model's
                     # reasoning preamble (before tools) or the final answer (no tools).
                     yield {"type": "token", "token": evt_data}
+                    streamed_content_text += evt_data
                     streamed_content = True
                 elif evt_type == "tool_calls":
                     tool_calls = evt_data
@@ -295,7 +297,11 @@ async def run_agent_loop(
             yield {"type": "tool_call", "name": name, "args": args, "iteration": iteration}
 
         # Append the assistant message with tool_calls
-        loop_messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
+        loop_messages.append({
+            "role": "assistant",
+            "content": streamed_content_text,
+            "tool_calls": tool_calls,
+        })
 
         # ── Execute ALL tools in parallel ──────────────────────────────────────
         results: list[tuple[str, dict, str]] = list(

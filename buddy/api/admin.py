@@ -140,6 +140,66 @@ async def tool_metrics():
     return get_tool_metrics()
 
 
+# ── Runtime tool enable / disable ─────────────────────────────────────────────
+
+class ToolToggleRequest(BaseModel):
+    disabled: bool
+
+
+@router.post("/tools/{tool_name}/toggle", dependencies=[Depends(_verify_admin_token)])
+async def toggle_tool(tool_name: str, req: ToolToggleRequest):
+    """
+    Disable or re-enable a tool at runtime — no restart required.
+    Changes are reflected immediately by execute_tool().
+    NOTE: This mutates the in-process settings list; it does NOT persist across restarts.
+    """
+    from buddy.tools.tool_registry import _TOOL_MAP
+    if tool_name not in _TOOL_MAP:
+        raise HTTPException(status_code=404, detail=f"Unknown tool '{tool_name}'")
+
+    current = list(cfg.disabled_tools)
+    if req.disabled:
+        if tool_name not in current:
+            current.append(tool_name)
+    else:
+        current = [t for t in current if t != tool_name]
+    cfg.disabled_tools = current
+
+    return {
+        "tool_name": tool_name,
+        "disabled": tool_name in cfg.disabled_tools,
+        "all_disabled": cfg.disabled_tools,
+    }
+
+
+# ── Tool test runner ───────────────────────────────────────────────────────────
+
+class ToolTestRequest(BaseModel):
+    tool_name: str
+    args: dict = {}
+
+
+@router.post("/tools/test", dependencies=[Depends(_verify_admin_token)])
+async def test_tool_run(req: ToolTestRequest):
+    """
+    Execute a tool directly from the admin UI — useful for verifying a tool works
+    after changing config or as a smoke-test before deployment.
+    The tool is subject to the normal disabled_tools check.
+    """
+    import time
+    from buddy.tools.tool_registry import execute_tool
+
+    t0 = time.monotonic()
+    try:
+        result = await execute_tool(req.tool_name, req.args)
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        ok = not (result.startswith("[") and "error" in result.lower())
+        return {"ok": ok, "result": result, "elapsed_ms": elapsed_ms}
+    except Exception as exc:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        return {"ok": False, "result": str(exc), "elapsed_ms": elapsed_ms}
+
+
 @router.get("/status", dependencies=[Depends(_verify_admin_token)])
 async def admin_status():
     # Ask Ollama which models are currently loaded in RAM

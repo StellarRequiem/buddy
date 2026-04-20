@@ -40,6 +40,8 @@ _MAX_TOOL_RESULT = 2_000
 _TOKEN_CHUNK = 40
 # Shell gate sentinel prefix
 _SHELL_GATE_PREFIX = "[SHELL_GATE_PENDING]"
+# Max tool-role messages kept in loop_messages before pruning oldest
+_MAX_TOOL_MESSAGES = 12
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -59,6 +61,20 @@ def _preview(text: str, max_len: int = 120) -> str:
 
 def _is_shell_gate(result: str) -> bool:
     return result.startswith(_SHELL_GATE_PREFIX)
+
+
+def _prune_tool_messages(messages: list[dict]) -> list[dict]:
+    """
+    Keep context window manageable by pruning oldest tool-role messages
+    when they accumulate beyond _MAX_TOOL_MESSAGES.
+    System and user/assistant messages are never pruned.
+    """
+    tool_indices = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    if len(tool_indices) <= _MAX_TOOL_MESSAGES:
+        return messages
+    # Drop the oldest half of tool messages
+    to_drop = set(tool_indices[:len(tool_indices) // 2])
+    return [m for i, m in enumerate(messages) if i not in to_drop]
 
 
 def _parse_args(raw: Any) -> dict:
@@ -241,6 +257,9 @@ async def run_agent_loop(
             yield {"type": "shell_gate", "payload": shell_gate_payload}
             yield {"type": "agent_done", "iterations": iteration, "tools_called": tools_called}
             return
+
+        # Prune old tool messages to protect context window
+        loop_messages = _prune_tool_messages(loop_messages)
 
     else:
         # Hit max iterations — do one last streaming synthesis

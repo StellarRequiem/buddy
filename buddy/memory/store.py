@@ -36,7 +36,8 @@ def get_history(session_id: str, limit: int = 40) -> list[dict]:
 def list_sessions() -> list[str]:
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT session_id FROM conversations ORDER BY MIN(id)"
+            "SELECT session_id FROM conversations "
+            "GROUP BY session_id ORDER BY MIN(id)"
         ).fetchall()
     return [r["session_id"] for r in rows]
 

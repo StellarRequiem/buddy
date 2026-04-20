@@ -616,6 +616,54 @@ h3 { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
   overflow-y: auto;
 }
 
+/* ── qwen3 reasoning trace block ────────────────────────── */
+.think-panel {
+  background: #0a1520;
+  border: 1px solid #1a3050;
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+  overflow: hidden;
+  font-size: 12px;
+}
+.think-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: #0d1e30;
+  border-bottom: 1px solid #1a3050;
+  cursor: pointer;
+  user-select: none;
+}
+.think-header:hover { background: #132840; }
+.think-icon { font-size: 13px; flex-shrink: 0; }
+.think-label {
+  color: #5b8fbf;
+  font-size: 11px;
+  font-weight: 600;
+  flex: 1;
+}
+.think-toggle {
+  color: var(--muted);
+  font-size: 11px;
+  transition: transform 0.15s;
+}
+.think-panel:not(.collapsed) .think-toggle { transform: rotate(90deg); }
+.think-body {
+  padding: 8px 12px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #5b8fbf;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  line-height: 1.5;
+  margin: 0;
+}
+.think-panel.collapsed .think-body { display: none; }
+.think-panel.collapsed .think-header { border-bottom: none; }
+
 /* ═══════════════════════════════════════════════════════════
    Tools Tab
    ══════════════════════════════════════════════════════════ */

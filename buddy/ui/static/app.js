@@ -165,6 +165,37 @@ async function sendMessage(e) {
 }
 
 // ── Agent activity panel ─────────────────────────────────────────────────────
+// ── qwen3 reasoning block ────────────────────────────────────────────────────
+function _getOrCreateThinkPanel(bubbleWrapper) {
+  let panel = bubbleWrapper.querySelector('.think-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.className = 'think-panel collapsed';
+    panel.innerHTML =
+      `<div class="think-header" onclick="this.closest('.think-panel').classList.toggle('collapsed')">` +
+      `<span class="think-icon">🧠</span>` +
+      `<span class="think-label">Reasoning</span>` +
+      `<span class="think-toggle">▸</span>` +
+      `</div>` +
+      `<pre class="think-body"></pre>`;
+    // Insert before activity panel and bubble
+    bubbleWrapper.insertBefore(panel, bubbleWrapper.firstChild);
+  }
+  return panel;
+}
+
+function _finalizeThinkPanel(panel) {
+  if (!panel) return;
+  // Collapse by default once reasoning is complete, update toggle indicator
+  panel.classList.add('collapsed');
+  const label = panel.querySelector('.think-label');
+  const body = panel.querySelector('.think-body');
+  if (label && body) {
+    const lines = body.textContent.split('\n').length;
+    label.textContent = `Reasoning (${lines} lines)`;
+  }
+}
+
 function _getOrCreateActivityPanel(bubbleWrapper) {
   let panel = bubbleWrapper.querySelector('.agent-activity');
   if (!panel) {
@@ -255,6 +286,8 @@ async function _sendStreaming(msg, frontier) {
   let buffer = '';
   let bubbleWrapper = null;   // the streaming message wrapper
   let activityPanel = null;
+  let thinkPanel = null;      // qwen3 reasoning block
+  let thinkText = '';         // accumulated thinking_trace content
   let fullText = '';
 
   while (true) {
@@ -269,6 +302,23 @@ async function _sendStreaming(msg, frontier) {
       if (!line.startsWith('data: ')) continue;
       let event;
       try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+      // ── qwen3 reasoning trace ────────────────────────────────────────────────
+      if (event.type === 'thinking_trace') {
+        if (!bubbleWrapper) {
+          hideThinking();
+          bubbleWrapper = appendMessage('assistant', '', '', null);
+          bubbleWrapper.querySelector('.msg-bubble').classList.add('streaming');
+        }
+        thinkText += event.token;
+        if (!thinkPanel) {
+          thinkPanel = _getOrCreateThinkPanel(bubbleWrapper);
+        }
+        thinkPanel.querySelector('.think-body').textContent = thinkText;
+        const box = document.getElementById('messages');
+        box.scrollTop = box.scrollHeight;
+        continue;
+      }
 
       // ── Tool call start ──────────────────────────────────────────────────────
       if (event.type === 'tool_call') {
@@ -318,6 +368,9 @@ async function _sendStreaming(msg, frontier) {
         if (bubbleWrapper) {
           bubbleWrapper.querySelector('.msg-bubble').classList.remove('streaming');
           bubbleWrapper.querySelector('.msg-bubble').textContent = fullText;
+
+          // Finalize think panel (collapse, update line count)
+          if (thinkPanel) _finalizeThinkPanel(thinkPanel);
 
           // Finalize activity panel
           if (activityPanel) {

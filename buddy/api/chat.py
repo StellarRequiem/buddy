@@ -260,10 +260,14 @@ async def chat_stream(req: ChatRequest):
                 ):
                     etype = event.get("type")
 
-                    if etype in ("token", "thinking"):
+                    if etype == "token":
                         token = event["token"]
                         full_text += token
                         yield f"data: {json.dumps({'token': token})}\n\n"
+
+                    elif etype == "thinking_trace":
+                        # qwen3 reasoning — forward to UI but NOT part of final answer
+                        yield f"data: {json.dumps(event)}\n\n"
 
                     elif etype in ("tool_call", "tool_result"):
                         yield f"data: {json.dumps(event)}\n\n"

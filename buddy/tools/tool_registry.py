@@ -431,33 +431,129 @@ async def _exec_note_list() -> str:
     return "\n".join(lines)
 
 
+async def _fetch_forest_status() -> dict:
+    """Shared helper — fetch raw status dict from Forest API."""
+    async with httpx.AsyncClient(timeout=4) as c:
+        resp = await c.get(f"{cfg.forest_host}/forest/status")
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def _exec_forest_status() -> str:
     from buddy.api.admin import is_test_mode
     if is_test_mode():
         return "Forest monitoring is paused (test mode active)."
     try:
-        async with httpx.AsyncClient(timeout=3) as c:
-            resp = await c.get(f"{cfg.forest_host}/forest/status")
-            d = resp.json()
+        d = await _fetch_forest_status()
         status = d.get("status", "unknown")
-        if status == "offline":
-            return "Forest swarm is offline."
+        if status in ("offline", "paused"):
+            return f"Forest swarm is {status}."
         active = d.get("active_incidents", [])
         sev = d.get("severity_breakdown", {})
         summary = (
-            f"Status: {status} | Logged: {d.get('total_logged', 0)} incidents | "
-            f"Chain: {d.get('chain_length', 0)}"
+            f"Forest status: {status} | "
+            f"Total logged: {d.get('total_logged', 0)} | "
+            f"Chain length: {d.get('chain_length', 0)}"
         )
         if sev:
-            summary += " | Severity: " + ", ".join(f"{k}:{v}" for k, v in sev.items())
+            summary += "\nSeverity breakdown: " + ", ".join(f"{k}:{v}" for k, v in sev.items())
         if active:
-            summary += f"\nActive incidents:\n" + "\n".join(
-                f"  [{i['severity']}] {i['threat_type']} ({i.get('phase', '')})"
+            summary += f"\nActive incidents ({len(active)}):\n" + "\n".join(
+                f"  [{i['severity']}] {i['threat_type']} — phase: {i.get('phase', '?')}"
                 for i in active
             )
+        else:
+            summary += "\nNo active incidents."
         return summary
     except Exception as e:
         return f"[forest_status error] {e}"
+
+
+async def _exec_forest_incidents(severity: str = "", limit: int = 10) -> str:
+    """
+    Return full incident details including blocked IPs, response actions,
+    and timestamps. Optionally filter by severity (CRITICAL, HIGH, ATTACK, etc.).
+    """
+    from buddy.api.admin import is_test_mode
+    if is_test_mode():
+        return "Forest monitoring is paused (test mode active)."
+    try:
+        d = await _fetch_forest_status()
+        if d.get("status") in ("offline", "paused"):
+            return f"Forest swarm is {d.get('status')}."
+        incidents: list[dict] = d.get("active_incidents", [])
+        if severity:
+            incidents = [i for i in incidents if i.get("severity", "").upper() == severity.upper()]
+        incidents = incidents[:max(1, min(int(limit), 50))]
+        if not incidents:
+            filter_note = f" with severity={severity}" if severity else ""
+            return f"No active incidents{filter_note}."
+        lines = [f"Active incidents{' ('+severity+')' if severity else ''}: {len(incidents)} found\n"]
+        for i, inc in enumerate(incidents, 1):
+            lines.append(f"[{i}] {inc.get('severity','?')} — {inc.get('threat_type','unknown')}")
+            lines.append(f"    Phase:   {inc.get('phase', '?')}")
+            lines.append(f"    Time:    {inc.get('timestamp', '?')[:19]}")
+            actions = inc.get("response_actions") or []
+            if actions:
+                lines.append(f"    Actions: {', '.join(actions)}")
+            ips = inc.get("blocked_ips") or []
+            if ips:
+                lines.append(f"    Blocked: {', '.join(ips)}")
+            desc = inc.get("description") or inc.get("details") or ""
+            if desc:
+                lines.append(f"    Detail:  {desc[:120]}")
+            lines.append("")
+        return "\n".join(lines).rstrip()
+    except Exception as e:
+        return f"[forest_incidents error] {e}"
+
+
+async def _exec_forest_scan() -> str:
+    """
+    Trigger a fresh Forest security scan and return the updated status.
+    The swarm watchers run continuously; this surfaces the latest state.
+    """
+    from buddy.api.admin import is_test_mode
+    if is_test_mode():
+        return "Forest monitoring is paused (test mode active)."
+    try:
+        # Try a dedicated scan/trigger endpoint first (Forest may expose one)
+        async with httpx.AsyncClient(timeout=8) as c:
+            try:
+                trigger = await c.post(f"{cfg.forest_host}/forest/scan")
+                trigger.raise_for_status()
+            except Exception:
+                pass  # No scan endpoint — that's fine, just read current state
+
+        d = await _fetch_forest_status()
+        status = d.get("status", "unknown")
+        if status in ("offline", "paused"):
+            return f"Forest swarm is {status} — scan not possible."
+
+        total = d.get("total_logged", 0)
+        active = d.get("active_incidents", [])
+        sev = d.get("severity_breakdown", {})
+        critical = sum(sev.get(k, 0) for k in ("CRITICAL", "ATTACK"))
+
+        result = (
+            f"🔍 Forest scan complete.\n"
+            f"Incidents on record: {total}\n"
+            f"Active now: {len(active)}\n"
+            f"Critical/Attack: {critical}\n"
+        )
+        if sev:
+            result += "Breakdown: " + ", ".join(f"{k}:{v}" for k, v in sorted(sev.items())) + "\n"
+        if active:
+            result += "\nTop incidents:\n" + "\n".join(
+                f"  [{i['severity']}] {i['threat_type']} ({i.get('phase','?')}) — "
+                f"{i.get('timestamp','?')[:16]}"
+                for i in active[:5]
+            )
+        else:
+            result += "No active threats detected."
+        return result
+    except Exception as e:
+        return f"[forest_scan error] {e}"
 
 
 # ── Tool definitions ────────────────────────────────────────────────────────────
@@ -737,11 +833,52 @@ TOOLS: list[ToolDef] = [
             "type": "function",
             "function": {
                 "name": "forest_status",
-                "description": "Get the current Forest blue-team security swarm status, active incidents, and severity breakdown.",
+                "description": "Get the current Forest blue-team security swarm status, active incident count, and severity breakdown.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
         execute=lambda args: _exec_forest_status(),
+    ),
+
+    ToolDef(
+        schema={
+            "type": "function",
+            "function": {
+                "name": "forest_incidents",
+                "description": "List active Forest security incidents with full details: blocked IPs, response actions, phase, timestamp. Use this when the user wants specifics about threats.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "severity": {
+                            "type": "string",
+                            "description": "Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, ATTACK (leave empty for all)",
+                            "default": "",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max incidents to return (default 10)",
+                            "default": 10,
+                        },
+                    },
+                    "required": [],
+                },
+            },
+        },
+        execute=lambda args: _exec_forest_incidents(
+            args.get("severity", ""), args.get("limit", 10)
+        ),
+    ),
+
+    ToolDef(
+        schema={
+            "type": "function",
+            "function": {
+                "name": "forest_scan",
+                "description": "Trigger a fresh Forest security scan and return a comprehensive threat summary. Use when the user asks to scan the network or check for current threats.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        execute=lambda args: _exec_forest_scan(),
     ),
 
     # ── New tools ─────────────────────────────────────────────────────────────

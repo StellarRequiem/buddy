@@ -75,6 +75,25 @@ class Settings(BaseSettings):
     # Only these severities trigger a chat alert (case-insensitive)
     forest_alert_severities: list[str] = ["CRITICAL", "ATTACK"]
 
+    # ── MLX backend (Apple Silicon speculative decoding) ───────────────────
+    # When true, buddy routes inference through an mlx-lm OpenAI-compatible
+    # server instead of Ollama.  Falls back to Ollama automatically if the
+    # MLX server is unreachable.
+    #
+    # Start the server:
+    #   bash scripts/start_mlx_server.sh
+    # Or manually:
+    #   python -m mlx_lm.server \
+    #       --model mlx-community/Qwen3-14B-4bit \
+    #       --draft-model mlx-community/Qwen3-1.7B-4bit \
+    #       --port 7439 --host 127.0.0.1
+    use_mlx_backend: bool = False
+    mlx_host: str = "http://127.0.0.1:7439"
+    # HuggingFace model ID or local path served by mlx-lm
+    mlx_model: str = "mlx-community/Qwen3-14B-4bit"
+    # Optional draft model for speculative decoding (leave empty to disable)
+    mlx_draft_model: str = "mlx-community/Qwen3-1.7B-4bit"
+
     # ── Anthropic ──────────────────────────────────────────────────────────
     anthropic_api_key: str = ""
 

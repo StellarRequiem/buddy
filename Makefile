@@ -63,6 +63,9 @@ seed:             ## Seed BuddyVault with realistic demo conversations
 seed-reset:       ## Wipe + re-seed demo conversations (clean slate)
 	uv run python scripts/seed_demo.py --reset
 
+mlx:              ## Start mlx-lm speculative-decoding server (Apple Silicon)
+	bash scripts/start_mlx_server.sh
+
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 clean:            ## Remove build artifacts, caches, coverage reports
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

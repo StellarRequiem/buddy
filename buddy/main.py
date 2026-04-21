@@ -260,6 +260,15 @@ async def health():
         checks["conductor_model"] = "unknown"
         checks["local_model"] = "unknown"
 
+    # ── MLX backend (optional) ─────────────────────────────────────────────
+    if settings.use_mlx_backend:
+        from buddy.llm.mlx_backend import mlx_health
+        mlx_result = await mlx_health()
+        checks["mlx"] = "ok" if mlx_result["ok"] else f"error: {mlx_result['error']}"
+        checks["mlx_models"] = mlx_result["models"]
+    else:
+        checks["mlx"] = "disabled"
+
     # ── Forest ─────────────────────────────────────────────────────────────
     try:
         async with _httpx.AsyncClient(timeout=2) as c:

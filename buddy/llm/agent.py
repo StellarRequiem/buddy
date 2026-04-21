@@ -300,8 +300,26 @@ async def run_agent_loop(
     loop_messages = list(messages)
     iteration = 0
     tools_called = 0
-    # Track whether we've already fallen back so we don't loop forever
-    _on_fallback = (target_model == cfg.fallback_local_model)
+
+    # ── Build ordered backend fallback chain ──────────────────────────────
+    # Each entry: (stream_with_tools_fn, stream_final_fn, model_name, label)
+    # We try backends in order; on connectivity error we advance permanently.
+    _BackendEntry = tuple  # (stream_fn, final_fn, model, label)
+    _backends: list[_BackendEntry] = []
+
+    if cfg.use_mlx_backend:
+        from buddy.llm.mlx_backend import mlx_stream_with_tools, mlx_stream_final
+        _backends.append((mlx_stream_with_tools, mlx_stream_final,
+                          cfg.mlx_model, "MLX"))
+        logger.info("MLX backend enabled: %s @ %s", cfg.mlx_model, cfg.mlx_host)
+
+    _backends.append((_ollama_stream_with_tools, _ollama_stream_final,
+                      target_model, "Ollama"))
+    if target_model != cfg.fallback_local_model:
+        _backends.append((_ollama_stream_with_tools, _ollama_stream_final,
+                          cfg.fallback_local_model, "Ollama-fallback"))
+
+    _backend_idx = 0  # advances permanently when a backend is unreachable
 
     while iteration < max_iter:
         iteration += 1
@@ -323,17 +341,20 @@ async def run_agent_loop(
         _think_buf = ""              # lookahead buffer for tag boundary splits
         _in_think  = False           # currently inside <think>…</think>
 
-        # ── Stream with automatic fallback on connectivity errors ─────────────
-        # If the primary model is unreachable (Ollama down, model not loaded,
-        # network timeout), we switch to cfg.fallback_local_model and inform
-        # the user via a token event.  Mid-stream failures (model error after
-        # connection) are not retried — they propagate as error events.
-        _stream_model = target_model
+        # ── Stream with automatic backend fallback ─────────────────────────
+        # On connectivity error, advance _backend_idx permanently and retry.
+        # Mid-stream errors (model started responding then failed) propagate
+        # as error events rather than retrying — partial output is ambiguous.
         while True:
+            if _backend_idx >= len(_backends):
+                yield {"type": "error",
+                       "message": "All backends unreachable. Check Ollama and MLX server."}
+                return
+
+            _sfn, _ffn, _smodel, _slabel = _backends[_backend_idx]
+
             try:
-                async for evt_type, evt_data in _ollama_stream_with_tools(
-                    loop_messages, model=_stream_model
-                ):
+                async for evt_type, evt_data in _sfn(loop_messages, model=_smodel):
                     if evt_type == "thinking":
                         _think_buf += evt_data
                         _think_buf, _in_think, events = _emit_think_chunk(_think_buf, _in_think)
@@ -345,7 +366,8 @@ async def run_agent_loop(
                                     streamed_content = True
                     elif evt_type == "tool_calls":
                         tool_calls = evt_data
-                # Flush any remaining buffer after stream ends
+
+                # Flush any remaining lookahead buffer after stream ends
                 if _think_buf:
                     ev_name = "thinking_trace" if _in_think else "token"
                     yield {"type": ev_name, "token": _think_buf}
@@ -355,29 +377,32 @@ async def run_agent_loop(
                 break  # stream completed successfully
 
             except _OLLAMA_CONNECT_ERRORS as exc:
-                fallback = cfg.fallback_local_model
-                if _on_fallback or _stream_model == fallback:
-                    # Already on fallback — nothing left to try
+                next_idx = _backend_idx + 1
+                if next_idx >= len(_backends):
                     logger.error(
-                        "Ollama unreachable on fallback model %s: %s", fallback, exc
+                        "All backends exhausted — last error on %s: %s", _slabel, exc
                     )
                     yield {"type": "error",
-                           "message": f"Ollama unreachable: {exc}. Is Ollama running?"}
+                           "message": (
+                               f"All inference backends unreachable. "
+                               f"Last error ({_slabel}): {exc}"
+                           )}
                     return
+                next_label = _backends[next_idx][3]
+                next_model = _backends[next_idx][2]
                 logger.warning(
-                    "Model %s unreachable — switching to fallback %s: %s",
-                    _stream_model, fallback, exc,
+                    "%s (%s) unreachable — switching to %s (%s): %s",
+                    _slabel, _smodel, next_label, next_model, exc,
                 )
                 yield {
                     "type": "token",
                     "token": (
-                        f"\n⚠️  {_stream_model} unavailable — "
-                        f"switching to {fallback}…\n\n"
+                        f"\n⚠️  {_slabel} unreachable — "
+                        f"switching to {next_label} ({next_model})…\n\n"
                     ),
                 }
-                _stream_model = fallback
-                _on_fallback = True
-                # Reset stream state and retry with fallback model
+                _backend_idx = next_idx  # permanently advance
+                # Reset stream state for retry
                 tool_calls = []
                 streamed_content = False
                 streamed_content_text = ""
@@ -385,16 +410,18 @@ async def run_agent_loop(
                 _in_think = False
 
             except Exception as exc:
-                logger.error("Ollama stream error (model=%s): %s", _stream_model, exc)
-                yield {"type": "error", "message": f"Ollama request failed: {exc}"}
+                logger.error("Stream error on %s (%s): %s", _slabel, _smodel, exc)
+                yield {"type": "error",
+                       "message": f"{_slabel} stream error: {exc}"}
                 return
 
         # ── No tool calls → streamed content was the final answer ─────────────
         if not tool_calls:
             if not streamed_content:
-                # Rare: empty response — retry once with fresh streaming call
+                # Rare: empty response — retry once with active backend's final fn
                 retried = False
-                async for token in _ollama_stream_final(loop_messages, model=target_model):
+                _, _ffn, _smodel, _ = _backends[_backend_idx]
+                async for token in _ffn(loop_messages, model=_smodel):
                     yield {"type": "token", "token": token}
                     retried = True
                 if not retried:
@@ -462,10 +489,11 @@ async def run_agent_loop(
         loop_messages = _prune_tool_messages(loop_messages)
 
     else:
-        # Hit max iterations — do one last streaming synthesis
+        # Hit max iterations — do one last streaming synthesis with active backend
         yield {"type": "token",
                "token": "\n\n[Max tool iterations reached — summarising]\n\n"}
-        async for token in _ollama_stream_final(loop_messages, model=target_model):
+        _, _ffn, _smodel, _ = _backends[_backend_idx]
+        async for token in _ffn(loop_messages, model=_smodel):
             yield {"type": "token", "token": token}
 
     yield {"type": "agent_done", "iterations": iteration, "tools_called": tools_called}

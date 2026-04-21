@@ -6,12 +6,15 @@ Used for semantic memory retrieval — find relevant past conversations.
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from buddy.config import settings as cfg
+
+logger = logging.getLogger(__name__)
 
 
 def _embed(texts: list[str]) -> list[list[float]]:
@@ -50,8 +53,8 @@ def upsert_memory(text: str, metadata: dict | None = None) -> str:
             embeddings=[embedding],
             metadatas=[metadata or {"source": "buddy"}],
         )
-    except Exception:
-        pass   # embed model not ready yet — skip without crashing
+    except Exception as exc:
+        logger.warning("upsert_memory failed (embed model unavailable?): %s", exc)
     return doc_id
 
 
@@ -60,15 +63,17 @@ def search_memory(query: str, n_results: int = 5) -> list[dict[str, Any]]:
     Returns empty list if embed model unavailable (graceful degradation)."""
     try:
         embedding = _embed([query])[0]
-    except Exception:
-        return []   # embed model not installed or Ollama unreachable
+    except Exception as exc:
+        logger.warning("search_memory embed failed — returning empty context: %s", exc)
+        return []
     try:
         results = _collection().query(
             query_embeddings=[embedding],
             n_results=n_results,
             include=["documents", "metadatas", "distances"],
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("search_memory chroma query failed: %s", exc)
         return []
     out = []
     for doc, meta, dist in zip(

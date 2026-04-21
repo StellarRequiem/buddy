@@ -30,7 +30,11 @@ from buddy.api.forest import router as forest_router
 from buddy.api.demo import router as demo_router
 from buddy.api.admin import router as admin_router
 from buddy.api.alerts import router as alerts_router, start_alert_poller
-from buddy.tools.shell import execute as shell_execute, consume_pending_token
+from buddy.tools.shell import (
+    execute as shell_execute,
+    consume_pending_token,
+    cleanup_expired_shell_tokens,
+)
 
 
 # ── Lifespan: startup + graceful shutdown ──────────────────────────────────
@@ -70,15 +74,18 @@ async def _warm_up_model(model: str) -> None:
     Runs as a background task so it doesn't delay server readiness.
     Non-fatal — if Ollama isn't up yet the first real request will load it.
     """
+    import logging as _logging
     import httpx as _httpx
+    _log = _logging.getLogger(__name__)
     try:
         async with _httpx.AsyncClient(timeout=30) as c:
             await c.post(
                 f"{settings.ollama_host}/api/generate",
                 json={"model": model, "prompt": "", "keep_alive": "10m"},
             )
-    except Exception:
-        pass  # silently skip — Ollama may still be starting up
+        _log.info("Model warm-up complete: %s", model)
+    except Exception as exc:
+        _log.warning("Model warm-up failed for %s (Ollama may still be starting): %s", model, exc)
 
 
 @asynccontextmanager
@@ -86,6 +93,7 @@ async def lifespan(_app: FastAPI):
     # Startup: run DB migrations, load plugins, start Forest alert poller,
     #          warm up the conductor model in the background
     init_db()
+    cleanup_expired_shell_tokens()
     from buddy.tools.plugin_loader import load_plugins
     load_plugins()
     poller_task = asyncio.create_task(start_alert_poller())
@@ -144,7 +152,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 app = FastAPI(
     title="Buddy",
     description=(
-        "Local-first agentic AI assistant — 25-tool native function-calling loop, "
+        "Local-first agentic AI assistant — 24-tool native function-calling loop, "
         "Forest security integration, cus-core response grading, and full audit trail."
     ),
     version="0.3.0",

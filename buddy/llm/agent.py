@@ -29,6 +29,14 @@ from typing import Any, AsyncGenerator
 
 import httpx
 
+# Exception types that indicate Ollama is unreachable (not a model error)
+_OLLAMA_CONNECT_ERRORS = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.RemoteProtocolError,
+)
+
 from buddy.config import settings as cfg
 from buddy.tools.tool_registry import TOOL_SCHEMAS, execute_tool
 from buddy.tools.shell import requires_confirmation
@@ -262,8 +270,8 @@ async def _execute_tool_call(tc: dict, session_id: str = "") -> tuple[str, dict,
     try:
         log_tool_call(name, success, latency_ms, session_id=session_id,
                       args_summary=args_summary, result_preview=_preview(result, 200))
-    except Exception:
-        pass  # metrics are best-effort
+    except Exception as exc:
+        logger.warning("log_tool_call failed (metrics best-effort): %s", exc)
     return name, args, result
 
 
@@ -292,6 +300,8 @@ async def run_agent_loop(
     loop_messages = list(messages)
     iteration = 0
     tools_called = 0
+    # Track whether we've already fallen back so we don't loop forever
+    _on_fallback = (target_model == cfg.fallback_local_model)
 
     while iteration < max_iter:
         iteration += 1
@@ -312,31 +322,72 @@ async def run_agent_loop(
         streamed_content_text = ""   # real response text (think stripped)
         _think_buf = ""              # lookahead buffer for tag boundary splits
         _in_think  = False           # currently inside <think>…</think>
-        try:
-            async for evt_type, evt_data in _ollama_stream_with_tools(
-                loop_messages, model=target_model
-            ):
-                if evt_type == "thinking":
-                    _think_buf += evt_data
-                    _think_buf, _in_think, events = _emit_think_chunk(_think_buf, _in_think)
-                    for ev_name, ev_text in events:
-                        if ev_text:
-                            yield {"type": ev_name, "token": ev_text}
-                            if ev_name == "token":
-                                streamed_content_text += ev_text
-                                streamed_content = True
-                elif evt_type == "tool_calls":
-                    tool_calls = evt_data
-            # Flush any remaining buffer after stream ends
-            if _think_buf:
-                ev_name = "thinking_trace" if _in_think else "token"
-                yield {"type": ev_name, "token": _think_buf}
-                if ev_name == "token":
-                    streamed_content_text += _think_buf
-                    streamed_content = True
-        except Exception as exc:
-            yield {"type": "error", "message": f"Ollama request failed: {exc}"}
-            return
+
+        # ── Stream with automatic fallback on connectivity errors ─────────────
+        # If the primary model is unreachable (Ollama down, model not loaded,
+        # network timeout), we switch to cfg.fallback_local_model and inform
+        # the user via a token event.  Mid-stream failures (model error after
+        # connection) are not retried — they propagate as error events.
+        _stream_model = target_model
+        while True:
+            try:
+                async for evt_type, evt_data in _ollama_stream_with_tools(
+                    loop_messages, model=_stream_model
+                ):
+                    if evt_type == "thinking":
+                        _think_buf += evt_data
+                        _think_buf, _in_think, events = _emit_think_chunk(_think_buf, _in_think)
+                        for ev_name, ev_text in events:
+                            if ev_text:
+                                yield {"type": ev_name, "token": ev_text}
+                                if ev_name == "token":
+                                    streamed_content_text += ev_text
+                                    streamed_content = True
+                    elif evt_type == "tool_calls":
+                        tool_calls = evt_data
+                # Flush any remaining buffer after stream ends
+                if _think_buf:
+                    ev_name = "thinking_trace" if _in_think else "token"
+                    yield {"type": ev_name, "token": _think_buf}
+                    if ev_name == "token":
+                        streamed_content_text += _think_buf
+                        streamed_content = True
+                break  # stream completed successfully
+
+            except _OLLAMA_CONNECT_ERRORS as exc:
+                fallback = cfg.fallback_local_model
+                if _on_fallback or _stream_model == fallback:
+                    # Already on fallback — nothing left to try
+                    logger.error(
+                        "Ollama unreachable on fallback model %s: %s", fallback, exc
+                    )
+                    yield {"type": "error",
+                           "message": f"Ollama unreachable: {exc}. Is Ollama running?"}
+                    return
+                logger.warning(
+                    "Model %s unreachable — switching to fallback %s: %s",
+                    _stream_model, fallback, exc,
+                )
+                yield {
+                    "type": "token",
+                    "token": (
+                        f"\n⚠️  {_stream_model} unavailable — "
+                        f"switching to {fallback}…\n\n"
+                    ),
+                }
+                _stream_model = fallback
+                _on_fallback = True
+                # Reset stream state and retry with fallback model
+                tool_calls = []
+                streamed_content = False
+                streamed_content_text = ""
+                _think_buf = ""
+                _in_think = False
+
+            except Exception as exc:
+                logger.error("Ollama stream error (model=%s): %s", _stream_model, exc)
+                yield {"type": "error", "message": f"Ollama request failed: {exc}"}
+                return
 
         # ── No tool calls → streamed content was the final answer ─────────────
         if not tool_calls:

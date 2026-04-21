@@ -4,11 +4,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-**Local-first agentic AI assistant. 25-tool native function-calling loop. Forest security integration. Every response graded.**
+**Local-first agentic AI assistant. 24-tool native function-calling loop. Forest security integration. Response grading via cus-core.**
 
 ---
 
-buddy is a self-hosted AI assistant that runs entirely on your machine. Unlike ChatGPT (cloud-only, no real tools), Ollama WebUI (chat interface, no agent loop), or LangChain (abstraction framework, not a product), buddy is a complete agentic system: it connects to a locally-running Ollama instance, invokes 25 tools natively via the model's function-calling API (not prompt-stuffed pseudo-tools), integrates with the Forest blue-team security swarm for live threat awareness, and grades every response it produces using cus-core rubrics evaluated by Claude Haiku with extended thinking. The result is a private, auditable, genuinely agentic assistant that costs nothing to run and exposes nothing to external services unless you explicitly enable the Anthropic API for escalation.
+buddy is a self-hosted AI assistant that runs entirely on your machine. Unlike ChatGPT (cloud-only, no real tools), Ollama WebUI (chat interface, no agent loop), or LangChain (abstraction framework, not a product), buddy is a complete agentic system: it connects to a locally-running Ollama instance, invokes 24 tools natively via the model's function-calling API (not prompt-stuffed pseudo-tools), integrates with the Forest blue-team security swarm for live threat awareness, and grades responses using cus-core rubrics evaluated by Claude Haiku with extended thinking (grading has a 45 s timeout; trivial exchanges are skipped). The result is a private, auditable, genuinely agentic assistant that costs nothing to run and exposes nothing to external services unless you explicitly enable the Anthropic API for escalation.
 
 ---
 
@@ -17,10 +17,10 @@ buddy is a self-hosted AI assistant that runs entirely on your machine. Unlike C
 | Feature | What it does | Why it matters |
 |---|---|---|
 | Native tool-calling loop | qwen2.5/qwen3 invoke tools via Ollama's `tools` parameter — the model emits structured `tool_calls[]`, not parsed text | Tools execute reliably; the model can chain them across iterations |
-| 25-tool suite | Filesystem, Git, shell (human-gated), Python sandbox, web search, HTTP fetch, notes, tasks, memory read/write, Forest security | Covers the full daily-driver workload without external dependencies |
+| 24-tool suite | Filesystem, Git, shell (human-gated), Python sandbox, web search, HTTP fetch, notes, tasks, memory read/write, Forest security | Covers the full daily-driver workload without external dependencies |
 | qwen3 thinking tokens | `<think>…</think>` blocks are parsed at stream time and forwarded as `thinking_trace` events for the UI's collapsible Reasoning panel | Live visibility into model reasoning before tool calls |
 | Forest security integration | Three tools (forest_status / forest_incidents / forest_scan) query the Forest blue-team swarm; a background SSE poller broadcasts CRITICAL and ATTACK alerts | Security incidents surface in chat in real time without polling |
-| cus-core response grading | Every response is scored on relevance (40%), accuracy (35%), conciseness (15%), and safety (10%) with a 65.0 pass threshold | Objective quality signal; drives escalation and memory filtering |
+| cus-core response grading | Non-trivial responses are scored on relevance (40%), accuracy (35%), conciseness (15%), and safety (10%) with a 65.0 pass threshold; grading has a 45 s timeout and is best-effort | Objective quality signal; drives escalation and memory filtering |
 | Expected-failure demos | `/demo/run` sends harmful prompts, grades the refusal as a high-quality outcome, and displays Haiku's reasoning through the rubric | Demonstrates that cus-core understands safety refusals |
 | Persistent memory | SQLite stores conversations, facts, tasks, tool metrics, and audit log; ChromaDB stores vector embeddings for semantic recall | Context survives restarts; relevant past exchanges are injected into each prompt |
 | API key auth | `API_KEY` protects all endpoints; `ADMIN_TOKEN` additionally gates `/admin/*`; both are optional for local installs | Safe to expose on a LAN or behind a reverse proxy |
@@ -46,7 +46,7 @@ User / Siri / API
   │  └──────────┬──────────────────────────────┘ │
   │             │ tool_calls[]                    │
   │  ┌──────────▼──────────────────────────────┐ │
-  │  │     Tool Registry  (25 tools)            │ │
+  │  │     Tool Registry  (24 tools)            │ │
   │  │  filesystem · git · web · memory        │ │
   │  │  notes · system · tasks · Forest        │ │
   │  └──────────┬──────────────────────────────┘ │

@@ -1,8 +1,20 @@
 """Tests for filesystem and shell tools."""
+import os
 import pytest
 from pathlib import Path
 from buddy.tools.filesystem import read_file, list_dir, _resolve_allowed
 from buddy.tools.shell import requires_confirmation, ShellDeniedError
+
+
+@pytest.fixture(autouse=True)
+def _shell_db(tmp_path, monkeypatch):
+    """Point the DB at a temp path and initialise the schema before each test."""
+    db = tmp_path / "test.db"
+    from buddy import config
+    monkeypatch.setattr(config.settings, "db_path", db)
+    monkeypatch.setattr(config.settings, "vault_path", tmp_path)
+    from buddy.memory.db import init_db
+    init_db()
 
 
 # ── Filesystem ──────────────────────────────────────────────────────────────

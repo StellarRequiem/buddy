@@ -22,23 +22,29 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import json
 import shutil
 import subprocess
-from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 import httpx
 
 from buddy.config import settings as cfg
 from buddy.tools.filesystem import (
-    read_file as _read_file,
-    write_file as _write_file,
     append_file as _append_file,
+)
+from buddy.tools.filesystem import (
     list_dir as _list_dir,
+)
+from buddy.tools.filesystem import (
+    read_file as _read_file,
+)
+from buddy.tools.filesystem import (
     search_files as _search_files,
 )
-
+from buddy.tools.filesystem import (
+    write_file as _write_file,
+)
 
 # ── ToolDef ────────────────────────────────────────────────────────────────────
 
@@ -110,7 +116,7 @@ async def _exec_run_python(code: str, timeout: int = 10) -> str:
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return f"[run_python timeout] Execution exceeded {timeout}s."
         out = stdout.decode("utf-8", errors="replace").strip()
@@ -133,8 +139,8 @@ async def _exec_get_sysinfo() -> str:
     try:
         vm = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=3)
         if vm.returncode == 0:
-            vm_map = {l.split(":")[0].strip(): l.split(":")[1].strip().rstrip(".")
-                      for l in vm.stdout.splitlines() if ":" in l}
+            vm_map = {ln.split(":")[0].strip(): ln.split(":")[1].strip().rstrip(".")
+                      for ln in vm.stdout.splitlines() if ":" in ln}
             ps = 16384
             free = int(vm_map.get("Pages free", "0")) * ps
             inactive = int(vm_map.get("Pages inactive", "0")) * ps
@@ -304,7 +310,7 @@ async def _exec_code_search(pattern: str, path: str = "~/BuddyVault",
         )
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return "[code_search timeout] Search exceeded 10s."
         output = stdout.decode("utf-8", errors="replace").strip()
@@ -337,7 +343,7 @@ async def _exec_git_status(repo_path: str = ".") -> str:
         if proc.returncode != 0:
             return f"[git_status error] {err or 'non-zero exit'}"
         return out or "(nothing to report)"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "[git_status timeout]"
     except Exception as e:
         return f"[git_status error] {e}"
@@ -363,7 +369,7 @@ async def _exec_git_log(repo_path: str = ".", n: int = 10) -> str:
         if proc.returncode != 0:
             return f"[git_log error] {err or 'non-zero exit'}"
         return out or "(no commits)"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "[git_log timeout]"
     except Exception as e:
         return f"[git_log error] {e}"
@@ -374,7 +380,6 @@ async def _exec_git_log(repo_path: str = ".", n: int = 10) -> str:
 # Distinct from vector memory (raw text, human-readable, persistent across runs)
 
 def _notes_dir():
-    from pathlib import Path
     d = cfg.vault_path / "notes"
     d.mkdir(parents=True, exist_ok=True)
     return d

@@ -8,10 +8,10 @@ No Ollama, no Anthropic API, no Chroma calls are made.
 from __future__ import annotations
 
 import json
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from fastapi.testclient import TestClient
+from unittest.mock import patch
 
+import pytest
+from fastapi.testclient import TestClient
 
 # ── App fixture ────────────────────────────────────────────────────────────────
 
@@ -134,8 +134,8 @@ def test_stream_basic_tokens(client):
             assert resp.status_code == 200
             raw = resp.read().decode()
 
-    lines = [l for l in raw.split("\n") if l.startswith("data: ")]
-    parsed = [json.loads(l[6:]) for l in lines]
+    lines = [ln for ln in raw.split("\n") if ln.startswith("data: ")]
+    parsed = [json.loads(ln[6:]) for ln in lines]
 
     tokens = [p["token"] for p in parsed if "token" in p]
     assert "Hello" in tokens
@@ -158,8 +158,8 @@ def test_stream_tool_call_events(client):
                            json={"message": "what day is it?"}) as resp:
             raw = resp.read().decode()
 
-    lines  = [l for l in raw.split("\n") if l.startswith("data: ")]
-    parsed = [json.loads(l[6:]) for l in lines]
+    lines  = [ln for ln in raw.split("\n") if ln.startswith("data: ")]
+    parsed = [json.loads(ln[6:]) for ln in lines]
 
     tool_calls   = [p for p in parsed if p.get("type") == "tool_call"]
     tool_results = [p for p in parsed if p.get("type") == "tool_result"]
@@ -180,8 +180,8 @@ def test_stream_thinking_trace_not_in_done_text(client):
                            json={"message": "what time?"}) as resp:
             raw = resp.read().decode()
 
-    lines  = [l for l in raw.split("\n") if l.startswith("data: ")]
-    parsed = [json.loads(l[6:]) for l in lines]
+    lines  = [ln for ln in raw.split("\n") if ln.startswith("data: ")]
+    parsed = [json.loads(ln[6:]) for ln in lines]
 
     # thinking_trace forwarded to UI
     traces = [p for p in parsed if p.get("type") == "thinking_trace"]

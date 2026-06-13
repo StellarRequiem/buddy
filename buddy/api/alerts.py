@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import httpx
 from fastapi import APIRouter
@@ -120,7 +120,7 @@ async def alert_stream():
                 try:
                     alert = await asyncio.wait_for(q.get(), timeout=20.0)
                     yield f"data: {json.dumps(alert)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"   # SSE comment keeps proxy alive
         finally:
             try:

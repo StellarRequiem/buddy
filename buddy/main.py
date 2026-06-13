@@ -20,20 +20,23 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from buddy.config import settings
-from buddy.memory.db import init_db
+from buddy.api.admin import router as admin_router
+from buddy.api.alerts import router as alerts_router
+from buddy.api.alerts import start_alert_poller
 from buddy.api.chat import router as chat_router
-from buddy.api.tasks import router as tasks_router
+from buddy.api.demo import router as demo_router
+from buddy.api.forest import router as forest_router
 from buddy.api.memory import router as memory_router
 from buddy.api.siri import router as siri_router
-from buddy.api.forest import router as forest_router
-from buddy.api.demo import router as demo_router
-from buddy.api.admin import router as admin_router
-from buddy.api.alerts import router as alerts_router, start_alert_poller
+from buddy.api.tasks import router as tasks_router
+from buddy.config import settings
+from buddy.memory.db import init_db
+from buddy.tools.shell import (
+    cleanup_expired_shell_tokens,
+    consume_pending_token,
+)
 from buddy.tools.shell import (
     execute as shell_execute,
-    consume_pending_token,
-    cleanup_expired_shell_tokens,
 )
 
 
@@ -44,8 +47,9 @@ async def _detect_and_upgrade_conductor() -> None:
     silently upgrade to qwen3 at runtime (no restart required).
     qwen3 has substantially better multi-step tool reasoning at the same VRAM cost.
     """
-    import httpx as _httpx
     import logging as _logging
+
+    import httpx as _httpx
     _log = _logging.getLogger(__name__)
     try:
         async with _httpx.AsyncClient(timeout=5) as c:
@@ -75,6 +79,7 @@ async def _warm_up_model(model: str) -> None:
     Non-fatal — if Ollama isn't up yet the first real request will load it.
     """
     import logging as _logging
+
     import httpx as _httpx
     _log = _logging.getLogger(__name__)
     try:
@@ -226,8 +231,8 @@ async def health():
     Returns HTTP 200 always (so uptime monitors don't false-alarm on degraded
     states). The `status` field is "ok" | "degraded" | "error".
     """
-    import time as _time
     import sqlite3 as _sqlite3
+    import time as _time
 
     checks: dict = {}
 

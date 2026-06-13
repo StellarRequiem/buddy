@@ -10,7 +10,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from buddy.memory.store import get_facts, upsert_fact
-from buddy.memory.vectors import search_memory, memory_count
+from buddy.memory.vectors import memory_count, search_memory
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -53,8 +53,8 @@ async def list_tools():
     Return the full tool catalogue: name, description, parameter summary,
     and whether the tool requires human approval (human_gate).
     """
-    from buddy.tools.tool_registry import TOOLS, _TOOL_MAP
     from buddy.config import settings as cfg
+    from buddy.tools.tool_registry import TOOLS
 
     result = []
     for t in TOOLS:

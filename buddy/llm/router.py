@@ -27,17 +27,17 @@ import json
 import os
 import re
 import time
+from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import AsyncGenerator
 
 import httpx
+from cus_core.grader import Grader
+from cus_core.models import Rubric, Stage, StageName, Task
 
 from buddy.config import settings as cfg
 from buddy.memory.store import log_grade
 
-from cus_core.models import Rubric, Stage, StageName, Task
-from cus_core.grader import Grader
 try:
     from cus_core.grader import OllamaGrader
 except ImportError:
@@ -411,7 +411,7 @@ async def _local_grade_async(response: str, context: str = "",
             loop.run_in_executor(_GRADE_EXECUTOR, _local_grade, response, context),
             timeout=timeout,
         )
-    except (asyncio.TimeoutError, Exception):
+    except (TimeoutError, Exception):
         return None
 
 

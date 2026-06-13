@@ -22,7 +22,7 @@ import logging
 import re
 import secrets
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from buddy.config import settings as cfg
 
@@ -60,11 +60,11 @@ def _check_banned(command: str) -> None:
 # ── SQLite-backed token store ──────────────────────────────────────────────────
 
 def _now_utc() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _expiry_utc() -> str:
-    return (datetime.now(timezone.utc) + timedelta(minutes=_TOKEN_TTL_MINUTES)).isoformat()
+    return (datetime.now(UTC) + timedelta(minutes=_TOKEN_TTL_MINUTES)).isoformat()
 
 
 def cleanup_expired_shell_tokens() -> int:

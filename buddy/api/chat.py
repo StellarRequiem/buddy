@@ -22,25 +22,29 @@ Streaming SSE event types:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
-
-import asyncio
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from buddy.config import settings as cfg
+from buddy.llm.agent import run_agent_collect, run_agent_loop
 from buddy.llm.prompts import build_chat_prompt
 from buddy.llm.router import (
-    route, local_chat_stream, opus_chat, grade_response_score,
-    RouteResult, _GRADE_EXECUTOR, _should_escalate_on_keywords,
+    _GRADE_EXECUTOR,
+    RouteResult,
     _local_grade_async,
+    _should_escalate_on_keywords,
+    grade_response_score,
+    local_chat_stream,
+    opus_chat,
+    route,
 )
-from buddy.llm.agent import run_agent_loop, run_agent_collect
-from buddy.memory.store import append_message, get_history, upsert_fact, list_sessions
+from buddy.memory.store import append_message, get_history, list_sessions
 from buddy.memory.vectors import search_memory, upsert_memory
 
 router = APIRouter(prefix="/chat", tags=["chat"])

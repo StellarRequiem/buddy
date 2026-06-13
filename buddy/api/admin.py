@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 
 from buddy.config import settings as cfg
-from buddy.memory.store import upsert_fact, get_facts, get_tool_metrics, log_audit, get_audit_log
+from buddy.memory.store import get_audit_log, get_facts, get_tool_metrics, log_audit, upsert_fact
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -193,6 +193,7 @@ async def test_tool_run(req: ToolTestRequest):
     The tool is subject to the normal disabled_tools check.
     """
     import time
+
     from buddy.tools.tool_registry import execute_tool
 
     t0 = time.monotonic()

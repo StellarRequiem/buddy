@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
 
 import anthropic
 from fastapi import APIRouter, HTTPException
@@ -187,7 +186,8 @@ async def run_demo(req: DemoRunRequest):
             raise HTTPException(status_code=503, detail=f"Grader call failed: {e}")
 
     # ── Step 3: Parse scores ───────────────────────────────────────────────────
-    import json, re
+    import json
+    import re
     text = scores_text.strip()
     if "```" in text:
         m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)

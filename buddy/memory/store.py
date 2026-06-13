@@ -6,11 +6,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
 from typing import Any
 
 from buddy.memory.db import get_conn
-
 
 # ── Conversations ──────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 """Extended filesystem and metrics tests."""
+
 import pytest
-from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -15,14 +15,14 @@ def use_temp_vault(tmp_path, monkeypatch):
 # ── write_file / append_file / search_files ───────────────────────────────────
 
 def test_write_file(tmp_path, monkeypatch):
-    from buddy.tools.filesystem import write_file, read_file
+    from buddy.tools.filesystem import read_file, write_file
     path = str(tmp_path / "hello.txt")
     write_file(path, "world")
     assert read_file(path) == "world"
 
 
 def test_write_file_creates_subdirs(tmp_path):
-    from buddy.tools.filesystem import write_file, read_file
+    from buddy.tools.filesystem import read_file, write_file
     path = str(tmp_path / "a" / "b" / "c.txt")
     write_file(path, "deep")
     assert read_file(path) == "deep"
@@ -63,7 +63,7 @@ def test_write_outside_vault_rejected(tmp_path, monkeypatch):
 # ── tool call metrics ─────────────────────────────────────────────────────────
 
 def test_log_and_get_tool_metrics():
-    from buddy.memory.store import log_tool_call, get_tool_metrics
+    from buddy.memory.store import get_tool_metrics, log_tool_call
     log_tool_call("web_search", True, 350, session_id="s1",
                   args_summary="query=python", result_preview="Python is...")
     log_tool_call("web_search", True, 280, session_id="s1",
@@ -82,7 +82,7 @@ def test_log_and_get_tool_metrics():
 
 
 def test_tool_metrics_recent_order():
-    from buddy.memory.store import log_tool_call, get_tool_metrics
+    from buddy.memory.store import get_tool_metrics, log_tool_call
     for i in range(5):
         log_tool_call(f"tool_{i}", True, i * 10)
     data = get_tool_metrics()

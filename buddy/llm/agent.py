@@ -25,9 +25,14 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import httpx
+
+from buddy.config import settings as cfg
+from buddy.tools.shell import requires_confirmation
+from buddy.tools.tool_registry import TOOL_SCHEMAS, execute_tool
 
 # Exception types that indicate Ollama is unreachable (not a model error)
 _OLLAMA_CONNECT_ERRORS = (
@@ -36,10 +41,6 @@ _OLLAMA_CONNECT_ERRORS = (
     httpx.ReadTimeout,
     httpx.RemoteProtocolError,
 )
-
-from buddy.config import settings as cfg
-from buddy.tools.tool_registry import TOOL_SCHEMAS, execute_tool
-from buddy.tools.shell import requires_confirmation
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +309,7 @@ async def run_agent_loop(
     _backends: list[_BackendEntry] = []
 
     if cfg.use_mlx_backend:
-        from buddy.llm.mlx_backend import mlx_stream_with_tools, mlx_stream_final
+        from buddy.llm.mlx_backend import mlx_stream_final, mlx_stream_with_tools
         _backends.append((mlx_stream_with_tools, mlx_stream_final,
                           cfg.mlx_model, "MLX"))
         logger.info("MLX backend enabled: %s @ %s", cfg.mlx_model, cfg.mlx_host)

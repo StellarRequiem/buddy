@@ -1,9 +1,15 @@
 """Tests for SQLite memory store."""
 import pytest
+
 from buddy.memory.db import init_db
 from buddy.memory.store import (
-    append_message, get_history, upsert_fact, get_facts,
-    create_task, update_task, list_tasks,
+    append_message,
+    create_task,
+    get_facts,
+    get_history,
+    list_tasks,
+    update_task,
+    upsert_fact,
 )
 
 

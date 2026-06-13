@@ -1,9 +1,8 @@
 """Tests for filesystem and shell tools."""
-import os
 import pytest
-from pathlib import Path
-from buddy.tools.filesystem import read_file, list_dir, _resolve_allowed
-from buddy.tools.shell import requires_confirmation, ShellDeniedError
+
+from buddy.tools.filesystem import _resolve_allowed, list_dir, read_file
+from buddy.tools.shell import ShellDeniedError, requires_confirmation
 
 
 @pytest.fixture(autouse=True)

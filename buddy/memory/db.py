@@ -17,12 +17,11 @@ Tables:
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
 from buddy.config import settings
-
 
 # ── Versioned migrations ───────────────────────────────────────────────────────
 # Add new entries at the END. Never edit or reorder existing entries.

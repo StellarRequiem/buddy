@@ -2,17 +2,18 @@
 Tests for the agent loop utilities and tool registry.
 No Ollama calls are made — all LLM interactions are mocked.
 """
-import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-
 
 # ── agent.py unit tests ────────────────────────────────────────────────────────
-
 from buddy.llm.agent import (
-    _truncate_result, _preview, _prune_tool_messages,
-    _parse_args, _is_shell_gate, _SHELL_GATE_PREFIX, _MAX_TOOL_RESULT,
+    _MAX_TOOL_RESULT,
+    _SHELL_GATE_PREFIX,
     _emit_think_chunk,
+    _is_shell_gate,
+    _parse_args,
+    _preview,
+    _prune_tool_messages,
+    _truncate_result,
 )
 
 
@@ -138,7 +139,6 @@ def test_prune_tool_messages_prunes_oldest():
 
 # ── tool_registry.py unit tests ───────────────────────────────────────────────
 
-import pytest
 
 
 @pytest.mark.asyncio
@@ -301,7 +301,7 @@ async def test_run_agent_collect_shell_gate_stops_loop(monkeypatch):
     When a tool returns the SHELL_GATE_PENDING sentinel the loop must stop
     and surface shell_gate payload.  tools_called increments for the shell call.
     """
-    from buddy.llm.agent import run_agent_collect, _SHELL_GATE_PREFIX
+    from buddy.llm.agent import run_agent_collect
 
     async def _mock_stream(messages, model):
         yield ("thinking", "")

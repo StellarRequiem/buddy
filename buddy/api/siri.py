@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from buddy.llm.prompts import build_chat_prompt
 from buddy.llm.router import route
-from buddy.memory.store import append_message, get_history, create_task
+from buddy.memory.store import append_message, create_task, get_history
 
 router = APIRouter(prefix="/siri", tags=["siri"])
 
@@ -62,7 +62,7 @@ class SiriTask(BaseModel):
 @router.post("/task", response_class=PlainTextResponse)
 async def task(req: SiriTask):
     """Create a task from Siri. Returns confirmation string."""
-    task_id = create_task(req.title)
+    create_task(req.title)
     return f"Task added: {req.title}"
 
 

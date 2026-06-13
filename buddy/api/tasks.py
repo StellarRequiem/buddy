@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from buddy.memory.store import create_task, update_task, list_tasks
+from buddy.memory.store import create_task, list_tasks, update_task
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
